@@ -1,0 +1,8 @@
+{
+  "name": "EUROJOB - Europe Careers & Visa Sponsorship",
+  "description": "Verified gateway for Asian applicants to European jobs with visa sponsorship across Germany, Netherlands, Malta, Lithuania, Serbia, and more.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+@keyframes subtleCirclePulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+    stroke-opacity: 1;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 0.7;
+    stroke-opacity: 0.8;
+  }
+}
+
+.logo-circle-pulse {
+  transform-origin: center;
+  animation: subtleCirclePulse 2.4s ease-in-out infinite;
+}

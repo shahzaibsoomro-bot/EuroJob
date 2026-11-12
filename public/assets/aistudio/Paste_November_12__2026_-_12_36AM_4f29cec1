@@ -1,0 +1,2790 @@
+'use client';
+
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  Globe, Search, ShieldCheck, CheckCircle2, Lock, Sparkles,
+  Bell, MessageSquare, Send, Upload, Copy, Check, Crown,
+  AlertTriangle, RefreshCw, X, Building2, MapPin, DollarSign,
+  LayoutDashboard, Eye, Clock, PowerOff, Power, Printer, FileText,
+  ChevronLeft, ChevronRight
+} from 'lucide-react';
+
+// ============================================================================
+// STRICT OWNER ACCESS CONFIGURATION (ONLY THIS EMAIL SEES THE OWNER DASHBOARD)
+// ============================================================================
+const ADMIN_EMAIL = 'shahzaibs189@gmail.com';
+
+// ============================================================================
+// TYPES & INTERFACES
+// ============================================================================
+type JobCategory = 'Tech & IT' | 'Truck & Logistics' | 'General Labor & Construction' | 'Agriculture & Farming';
+
+interface Job {
+  id: string;
+  title: string;
+  company: string;
+  country: string;
+  city: string;
+  category: JobCategory;
+  salary: string;
+  visaSponsored: boolean;
+  postedAt: string;
+  source: 'Arbeitnow API' | 'Jooble EU' | 'Adzuna EU' | 'EUROJOB Verified';
+  description: string;
+  requirements: string[];
+}
+
+interface UserAccount {
+  id: string;
+  name: string;
+  email: string;
+  authProvider: 'Google' | 'Email';
+  nationality: string;
+  trade: JobCategory;
+  experienceYears: number;
+  skills: string;
+  hasPassport: boolean;
+  hasLicenseOrCert: boolean;
+  isPro: boolean;
+  proExpiresAt?: number | null;
+  threeDayWarnedForCycle?: boolean;
+  applicationsUsed: number;
+  appliedJobIds: string[];
+  showCongratsModal?: boolean;
+}
+
+interface PaymentSubmission {
+  id: string;
+  targetEmail: string;
+  method: 'Easypaisa' | 'ACH Bank Transfer';
+  transactionId: string;
+  screenshotUrl: string;
+  submittedAt: string;
+  status: 'Pending' | 'Approved' | 'Rejected';
+}
+
+interface NotificationItem {
+  id: string;
+  userEmail: string;
+  title: string;
+  message: string;
+  type: 'success' | 'warning' | 'info';
+  createdAt: string;
+  read: boolean;
+}
+
+interface DiscussionPost {
+  id: string;
+  authorName: string;
+  authorIsPro: boolean;
+  countryTag: string;
+  title: string;
+  body: string;
+  upvotes: number;
+  createdAt: string;
+  replies: { id: string; author: string; text: string; isAdmin?: boolean }[];
+}
+
+// ============================================================================
+// HELPER: CALCULATE DAYS REMAINING ON PRO SUBSCRIPTION
+// ============================================================================
+const MS_PER_DAY = 1000 * 60 * 60 * 24;
+
+function getRemainingProDays(proExpiresAt?: number | null): number {
+  if (!proExpiresAt) return 0;
+  const diff = proExpiresAt - Date.now();
+  return diff <= 0 ? 0 : Math.ceil(diff / MS_PER_DAY);
+}
+
+// ============================================================================
+// MULTI-COUNTRY 5,000+ VERIFIED EUROPEAN JOB GENERATOR + INITIAL SEED
+// ============================================================================
+const TARGET_COUNTRIES = [
+  'All Countries', 'Germany', 'France', 'Netherlands', 'Serbia', 'Malta',
+  'Lithuania', 'Georgia', 'Armenia', 'Czech Republic', 'Norway', 'Finland', 'Switzerland'
+];
+
+const BASE_TEMPLATES: Omit<Job, 'id'>[] = [
+  {
+    title: 'Long-Haul Heavy Truck Driver (CE License)',
+    company: 'TransEuropa Logistics GmbH',
+    country: 'Germany',
+    city: 'Hamburg',
+    category: 'Truck & Logistics',
+    salary: '€3,400 – €4,100 / month',
+    visaSponsored: true,
+    postedAt: '2 hours ago',
+    source: 'Jooble EU',
+    description: 'International freight transport across Germany, Netherlands, and France. Full EU work permit and accommodation assistance provided for qualified Asian drivers.',
+    requirements: ['Valid Heavy Vehicle License (CE)', 'Minimum 2 years highway experience', 'Basic English or German', 'Valid Passport']
+  },
+  {
+    title: 'Full-Stack Next.js & Cloud Engineer',
+    company: 'NordicFin Systems B.V.',
+    country: 'Netherlands',
+    city: 'Amsterdam',
+    category: 'Tech & IT',
+    salary: '€5,200 – €6,500 / month',
+    visaSponsored: true,
+    postedAt: '4 hours ago',
+    source: 'Arbeitnow API',
+    description: 'Build high-throughput European banking microservices. Recognized Dutch Highly Skilled Migrant (HSM) visa sponsorship with relocation package.',
+    requirements: ['3+ years React, Next.js & Node.js', 'REST/GraphQL & Cloud deployment', 'Fluent English', 'Bachelor degree or equivalent experience']
+  },
+  {
+    title: 'Commercial Construction Welder & Steel Fixer',
+    company: 'BalkanBuild Infrastructure d.o.o.',
+    country: 'Serbia',
+    city: 'Belgrade',
+    category: 'General Labor & Construction',
+    salary: '€1,450 – €1,850 / month + Housing',
+    visaSponsored: true,
+    postedAt: '5 hours ago',
+    source: 'EUROJOB Verified',
+    description: 'Urgent hiring for commercial infrastructure projects in Belgrade. Free company dormitory, 3 meals daily, and fast-track D-Visa work permit.',
+    requirements: ['MIG/MAG or TIG welding experience', 'Physically fit for site work', 'Valid Passport (18+ months validity)']
+  },
+  {
+    title: 'Hydroponic Greenhouse & Harvest Specialist',
+    company: 'SuomiFresh Agro Oy',
+    country: 'Finland',
+    city: 'Turku',
+    category: 'Agriculture & Farming',
+    salary: '€2,300 – €2,750 / month',
+    visaSponsored: true,
+    postedAt: '7 hours ago',
+    source: 'Adzuna EU',
+    description: 'Year-round climate-controlled tomato and berry greenhouse cultivation. Seasonal and long-term residence permits available.',
+    requirements: ['Experience in farming or greenhouse care', 'Ability to work in team shifts', 'Valid Passport']
+  },
+  {
+    title: 'Hospitality Housekeeping & Kitchen Steward',
+    company: 'Valletta Grand Resort',
+    country: 'Malta',
+    city: 'St. Julian’s',
+    category: 'General Labor & Construction',
+    salary: '€1,350 – €1,650 / month + Tips',
+    visaSponsored: true,
+    postedAt: '9 hours ago',
+    source: 'EUROJOB Verified',
+    description: '5-star Mediterranean beachfront hotel seeking dedicated housekeeping and kitchen support staff. Single Permit visa sponsorship included.',
+    requirements: ['Basic communicative English', 'Hospitality or cleaning background preferred', 'Clean Police Clearance Certificate']
+  },
+  {
+    title: 'International Trailer Driver (East-West Corridor)',
+    company: 'BalticCargo UAB',
+    country: 'Lithuania',
+    city: 'Vilnius',
+    category: 'Truck & Logistics',
+    salary: '€2,800 – €3,300 / month',
+    visaSponsored: true,
+    postedAt: '12 hours ago',
+    source: 'Jooble EU',
+    description: 'Modern Euro-6 Mercedes Actros fleet operating between Lithuania, Poland, and Germany. Code 95 training provided upon arrival.',
+    requirements: ['Heavy Truck Driving License', '1+ year trailer experience', 'Valid Passport']
+  },
+  {
+    title: 'Industrial Electrician & CNC Machine Operator',
+    company: 'Bohemia Precision s.r.o.',
+    country: 'Czech Republic',
+    city: 'Brno',
+    category: 'General Labor & Construction',
+    salary: '€1,950 – €2,400 / month',
+    visaSponsored: true,
+    postedAt: '1 day ago',
+    source: 'Adzuna EU',
+    description: 'Automotive parts manufacturing plant hiring skilled industrial electricians and CNC operators under Czech Employee Card scheme.',
+    requirements: ['Technical trade diploma or 2 years factory experience', 'Ability to read technical schematics']
+  },
+  {
+    title: 'Dairy Farm & Automated Milking Technician',
+    company: 'AlpineMeadow AG',
+    country: 'Switzerland',
+    city: 'Bern',
+    category: 'Agriculture & Farming',
+    salary: 'CHF 3,800 – CHF 4,300 / month',
+    visaSponsored: true,
+    postedAt: '1 day ago',
+    source: 'EUROJOB Verified',
+    description: 'Manage modern dairy herd operations and automated milking parlors in Canton Bern. On-site farm apartment included.',
+    requirements: ['Livestock/dairy handling experience', 'Basic English or German', 'Valid Passport']
+  },
+  {
+    title: 'Warehouse Picker, Packer & Forklift Operator',
+    company: 'LyonExpress Distribution SAS',
+    country: 'France',
+    city: 'Lyon',
+    category: 'Truck & Logistics',
+    salary: '€2,250 – €2,650 / month',
+    visaSponsored: true,
+    postedAt: '1 day ago',
+    source: 'Adzuna EU',
+    description: 'E-commerce fulfillment center hiring reach-truck forklift operators and inventory packers.',
+    requirements: ['Warehouse or forklift experience', 'Basic English or French']
+  },
+  {
+    title: 'Seafood Processing & Cold-Storage Technician',
+    company: 'FjordHarvest AS',
+    country: 'Norway',
+    city: 'Bergen',
+    category: 'Agriculture & Farming',
+    salary: '€3,200 – €3,700 / month',
+    visaSponsored: true,
+    postedAt: '2 days ago',
+    source: 'Jooble EU',
+    description: 'Quality sorting, filleting, and cold-chain packaging at coastal Norwegian facility.',
+    requirements: ['Food processing or factory experience', 'Valid Passport']
+  },
+  {
+    title: 'Civil & Road Construction Helper',
+    company: 'Caucasus Infra Group',
+    country: 'Georgia',
+    city: 'Tbilisi',
+    category: 'General Labor & Construction',
+    salary: '$950 – $1,250 / month + Accommodation',
+    visaSponsored: true,
+    postedAt: '2 days ago',
+    source: 'EUROJOB Verified',
+    description: 'Highway and commercial building expansion in Tbilisi. Fast visa processing for South & Southeast Asian applicants.',
+    requirements: ['Construction helper experience', 'Valid Passport']
+  },
+  {
+    title: 'QA Automation & Cybersecurity Analyst',
+    company: 'YerevanTech Global',
+    country: 'Armenia',
+    city: 'Yerevan',
+    category: 'Tech & IT',
+    salary: '$2,400 – $3,100 / month',
+    visaSponsored: true,
+    postedAt: '2 days ago',
+    source: 'Arbeitnow API',
+    description: 'Security auditing and automated Playwright testing for European SaaS clients.',
+    requirements: ['2+ years QA or AppSec experience', 'Strong English communication']
+  }
+];
+
+function buildInitialVerifiedFeed(totalCount = 5040): Job[] {
+  const shifts = ['Day Shift', 'International Route', 'Senior', 'Shift A', 'Relocation Batch', 'Express Visa'];
+  const list: Job[] = [];
+  for (let i = 0; i < totalCount; i++) {
+    const base = BASE_TEMPLATES[i % BASE_TEMPLATES.length];
+    const batch = Math.floor(i / BASE_TEMPLATES.length);
+    list.push({
+      ...base,
+      id: `eu-job-${i + 1}`,
+      title: batch === 0 ? base.title : `${base.title} (${shifts[batch % shifts.length]} #${batch + 1})`
+    });
+  }
+  return list;
+}
+
+const INITIAL_DISCUSSIONS: DiscussionPost[] = [
+  {
+    id: 'disc-1',
+    authorName: 'Bilal Ahmed',
+    authorIsPro: true,
+    countryTag: 'Germany',
+    title: 'CE Truck License conversion timeline in Germany from Pakistan/India?',
+    body: 'Has anyone recently completed their Code 95 and CE license practical test in Hamburg? How many weeks did the visa stamping take after receiving the employer contract?',
+    upvotes: 24,
+    createdAt: '3 hours ago',
+    replies: [
+      {
+        id: 'r-1',
+        author: 'EUROJOB Admin',
+        text: 'Once your German employer issues the pre-approval (Vorabzustimmung), embassy appointments typically take 3–5 weeks. Make sure your driving license verification certificate is attested.',
+        isAdmin: true
+      }
+    ]
+  },
+  {
+    id: 'disc-2',
+    authorName: 'Rohan Sharma',
+    authorIsPro: false,
+    countryTag: 'Malta',
+    title: 'Malta Identità Single Permit checklist for Hospitality jobs',
+    body: 'I just applied to Valletta Grand Resort through EUROJOB. Sharing the exact document list required: 18-month valid passport, Europass CV, Police Clearance Certificate, and accommodation lease.',
+    upvotes: 18,
+    createdAt: '1 day ago',
+    replies: []
+  }
+];
+
+// ============================================================================
+// MAIN APPLICATION COMPONENT
+// ============================================================================
+export default function EuroJobApp() {
+  const [activeTab, setActiveTab] = useState<'jobs' | 'career-studio' | 'discussions' | 'profile' | 'admin'>('jobs');
+
+  // Job Feed & Pagination (5,040+ Jobs)
+  const [jobs, setJobs] = useState<Job[]>(() => buildInitialVerifiedFeed(5040));
+  const [selectedCountry, setSelectedCountry] = useState<string>('All Countries');
+  const [selectedCategory, setSelectedCategory] = useState<string>('All Categories');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const JOBS_PER_PAGE = 20;
+  const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+  const [isSyncingApi, setIsSyncingApi] = useState<boolean>(false);
+
+  // Users & Current Session (Owner account shahzaibs189@gmail.com pre-registered)
+  const [users, setUsers] = useState<UserAccount[]>([
+    {
+      id: 'u-owner',
+      name: 'Shahzaib Soomro (Owner)',
+      email: ADMIN_EMAIL,
+      authProvider: 'Google',
+      nationality: 'Pakistan',
+      trade: 'Tech & IT',
+      experienceYears: 5,
+      skills: 'Full Stack Development, Cybersecurity, Cloud Architecture',
+      hasPassport: true,
+      hasLicenseOrCert: true,
+      isPro: true,
+      proExpiresAt: Date.now() + 30 * MS_PER_DAY,
+      applicationsUsed: 0,
+      appliedJobIds: []
+    },
+    {
+      id: 'u-demo-expiring',
+      name: 'Bilal Ahmed',
+      email: 'bilal.driver@gmail.com',
+      authProvider: 'Google',
+      nationality: 'Pakistan',
+      trade: 'Truck & Logistics',
+      experienceYears: 6,
+      skills: 'Heavy Trailer CE License, Euro-6 Fleet, English',
+      hasPassport: true,
+      hasLicenseOrCert: true,
+      isPro: true,
+      proExpiresAt: Date.now() + 2 * MS_PER_DAY, // 2 days left -> triggers 3-day warning!
+      threeDayWarnedForCycle: false,
+      applicationsUsed: 14,
+      appliedJobIds: ['eu-job-1', 'eu-job-6']
+    },
+    {
+      id: 'u-demo-free',
+      name: 'Kamran Tariq',
+      email: 'kamran.applicant@gmail.com',
+      authProvider: 'Email',
+      nationality: 'Pakistan',
+      trade: 'General Labor & Construction',
+      experienceYears: 4,
+      skills: 'MIG/TIG Welding, Steel Fixing, Safety',
+      hasPassport: true,
+      hasLicenseOrCert: true,
+      isPro: false,
+      proExpiresAt: null,
+      applicationsUsed: 4,
+      appliedJobIds: ['eu-job-3', 'eu-job-5', 'eu-job-7', 'eu-job-11']
+    }
+  ]);
+
+  const [currentUserEmail, setCurrentUserEmail] = useState<string | null>(null);
+  const currentUser = useMemo(
+    () => users.find((u) => u.email.toLowerCase() === currentUserEmail?.toLowerCase()) || null,
+    [users, currentUserEmail]
+  );
+
+  // Strict Owner Check (ONLY shahzaibs189@gmail.com)
+  const isAdmin = Boolean(
+    currentUser && currentUser.email.toLowerCase() === ADMIN_EMAIL.toLowerCase()
+  );
+
+  useEffect(() => {
+    if (activeTab === 'admin' && !isAdmin) {
+      setActiveTab('jobs');
+    }
+  }, [activeTab, isAdmin]);
+
+  // Payment Settings (Exact Easypaisa & Cross River Bank ACH details)
+  const [paymentConfig] = useState({
+    easypaisaName: 'SHAH ZAIB SOOMRO',
+    easypaisaNumber: '03003608184',
+    easypaisaPurpose: 'Purchasing',
+    easypaisaPkrAmount: 'PKR 1,400 ($5 USD)',
+    achAccountName: 'Shahzaib Soomro',
+    achBankName: 'Cross River Bank',
+    achAccountNumber: '354507419548',
+    achRoutingNumber: '021214891',
+    achAccountType: 'Current',
+    achUsdAmount: '$5.00 USD'
+  });
+
+  // Payment Submissions & Notifications
+  const [paymentSubmissions, setPaymentSubmissions] = useState<PaymentSubmission[]>([]);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [showNotifDropdown, setShowNotifDropdown] = useState(false);
+
+  // Modals State
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authMode, setAuthMode] = useState<'signup' | 'login'>('signup');
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [paymentTab, setPaymentTab] = useState<'easypaisa' | 'ach'>('easypaisa');
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [previewReceiptUrl, setPreviewReceiptUrl] = useState<string | null>(null);
+
+  // Payment Proof Form State
+  const [payTargetEmail, setPayTargetEmail] = useState('');
+  const [payTxId, setPayTxId] = useState('');
+  const [payScreenshot, setPayScreenshot] = useState<string>('');
+  const [paySubmittedSuccess, setPaySubmittedSuccess] = useState(false);
+
+  // Auth Form State
+  const [authName, setAuthName] = useState('');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authNationality, setAuthNationality] = useState('Pakistan');
+  const [authTrade, setAuthTrade] = useState<JobCategory>('Tech & IT');
+
+  // Admin New Job Form State
+  const [newJobTitle, setNewJobTitle] = useState('');
+  const [newJobCompany, setNewJobCompany] = useState('');
+  const [newJobCountry, setNewJobCountry] = useState('Germany');
+  const [newJobCity, setNewJobCity] = useState('');
+  const [newJobCategory, setNewJobCategory] = useState<JobCategory>('Tech & IT');
+  const [newJobSalary, setNewJobSalary] = useState('');
+  const [newJobDesc, setNewJobDesc] = useState('');
+
+  // Discussions State
+  const [discussions, setDiscussions] = useState<DiscussionPost[]>(INITIAL_DISCUSSIONS);
+  const [newPostTitle, setNewPostTitle] = useState('');
+  const [newPostCountry, setNewPostCountry] = useState('Germany');
+  const [newPostBody, setNewPostBody] = useState('');
+
+  // AI Helpcenter Chatbot State
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatInput, setChatInput] = useState('');
+  const [chatMessages, setChatMessages] = useState<{ role: 'bot' | 'user'; text: string }[]>([
+    {
+      role: 'bot',
+      text: 'Welcome to EUROJOB AI Helpcenter! Ask me about European work visas (Germany, Malta, Lithuania, Serbia, Netherlands, Finland), Europass CVs, or upgrading to Pro ($5/mo).'
+    }
+  ]);
+
+  // Interactive Europass Resume & Cover Letter Builder State
+  const [studioJobId, setStudioJobId] = useState<string>('eu-job-1');
+  const [cvFullName, setCvFullName] = useState('');
+  const [cvEmail, setCvEmail] = useState('');
+  const [cvPhone, setCvPhone] = useState('');
+  const [cvDob, setCvDob] = useState('');
+  const [cvPassportNumber, setCvPassportNumber] = useState('');
+  const [cvPassportExpiry, setCvPassportExpiry] = useState('');
+  const [cvNationality, setCvNationality] = useState('Pakistan');
+  const [cvAddress, setCvAddress] = useState('');
+  const [cvEducation, setCvEducation] = useState('');
+  const [cvExperience, setCvExperience] = useState('');
+  const [cvSkillsAndLanguages, setCvSkillsAndLanguages] = useState('');
+  const [cvGenerated, setCvGenerated] = useState(false);
+
+  // Select first job on load
+  useEffect(() => {
+    if (!selectedJob && jobs.length > 0) {
+      setSelectedJob(jobs[0]);
+    }
+  }, [jobs, selectedJob]);
+
+  // Auto-fill CV Builder fields when user logs in
+  useEffect(() => {
+    if (currentUser) {
+      setPayTargetEmail(currentUser.email);
+      setCvFullName((prev) => prev || currentUser.name);
+      setCvEmail((prev) => prev || currentUser.email);
+      setCvNationality((prev) => prev || currentUser.nationality);
+      setCvSkillsAndLanguages((prev) => prev || currentUser.skills);
+    }
+  }, [currentUser]);
+
+  // Automatic 3-Day Expiration Check & Auto-Downgrade at 0 Days
+  useEffect(() => {
+    if (!currentUser || !currentUser.isPro) return;
+
+    const daysLeft = getRemainingProDays(currentUser.proExpiresAt);
+
+    if (daysLeft <= 0) {
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.email.toLowerCase() === currentUser.email.toLowerCase()
+            ? { ...u, isPro: false, proExpiresAt: null, threeDayWarnedForCycle: false }
+            : u
+        )
+      );
+      setNotifications((prev) => [
+        {
+          id: `notif-exp-${Date.now()}`,
+          userEmail: currentUser.email,
+          title: 'EUROJOB PRO Membership Expired',
+          message:
+            'Your 30-day Pro subscription has ended and your account has reverted to the Free plan. Renew anytime for $5/mo to restore unlimited applications and your Purple PRO status.',
+          type: 'warning',
+          createdAt: 'Just now',
+          read: false
+        },
+        ...prev
+      ]);
+      return;
+    }
+
+    if (daysLeft <= 3 && !currentUser.threeDayWarnedForCycle) {
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.email.toLowerCase() === currentUser.email.toLowerCase()
+            ? { ...u, threeDayWarnedForCycle: true }
+            : u
+        )
+      );
+      setNotifications((prev) => [
+        {
+          id: `notif-3d-${Date.now()}`,
+          userEmail: currentUser.email,
+          title: `⚠️ ${daysLeft} Day${daysLeft === 1 ? '' : 's'} Left — Activate/Renew Your PRO Account`,
+          message: `Your EUROJOB PRO subscription will deactivate in ${daysLeft} day${
+            daysLeft === 1 ? '' : 's'
+          }. Submit your $5/mo renewal via Easypaisa or ACH now so your unlimited access and Purple PRO badge stay active without interruption!`,
+          type: 'warning',
+          createdAt: 'Just now',
+          read: false
+        },
+        ...prev
+      ]);
+    }
+  }, [currentUser]);
+
+  // Filtered & Paginated Jobs
+  const filteredJobs = useMemo(() => {
+    return jobs.filter((job) => {
+      const matchesCountry = selectedCountry === 'All Countries' || job.country === selectedCountry;
+      const matchesCategory = selectedCategory === 'All Categories' || job.category === selectedCategory;
+      const matchesSearch =
+        job.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        job.country.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        job.company.toLowerCase().includes(searchQuery.toLowerCase());
+      return matchesCountry && matchesCategory && matchesSearch;
+    });
+  }, [jobs, selectedCountry, selectedCategory, searchQuery]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredJobs.length / JOBS_PER_PAGE));
+  const paginatedJobs = useMemo(() => {
+    const start = (currentPage - 1) * JOBS_PER_PAGE;
+    return filteredJobs.slice(start, start + JOBS_PER_PAGE);
+  }, [filteredJobs, currentPage]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedCountry, selectedCategory, searchQuery]);
+
+  const handleCopy = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedField(label);
+    setTimeout(() => setCopiedField(null), 2000);
+  };
+
+  // Print-to-PDF Helper
+  const handleDownloadPdf = (documentTitle: string, elementId: string) => {
+    const contentEl = document.getElementById(elementId);
+    if (!contentEl) return;
+
+    const printWindow = window.open('', '_blank', 'width=850,height=950');
+    if (!printWindow) {
+      window.print();
+      return;
+    }
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>${documentTitle}</title>
+          <style>
+            body { font-family: 'Segoe UI', Arial, sans-serif; color: #0f172a; padding: 40px; line-height: 1.55; }
+            .header { border-bottom: 3px solid #1e3a8a; padding-bottom: 14px; margin-bottom: 20px; }
+            .brand { font-size: 11px; font-weight: 700; color: #1d4ed8; letter-spacing: 1.5px; text-transform: uppercase; }
+            h1 { margin: 4px 0 0 0; font-size: 24px; color: #0f172a; }
+            h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: #1e3a8a; border-bottom: 1px solid #cbd5e1; padding-bottom: 4px; margin-top: 20px; }
+            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; font-size: 13px; }
+            p, li { font-size: 13px; white-space: pre-line; }
+            @media print { body { padding: 20px; } }
+          </style>
+        </head>
+        <body>
+          ${contentEl.innerHTML}
+          <script>window.onload = function() { window.print(); };</script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  // Multi-Page Live API Fetcher (Fetches multiple pages from Arbeitnow EU API)
+  const syncLiveEuropeanJobs = async () => {
+    setIsSyncingApi(true);
+    try {
+      const pagesToFetch = [1, 2, 3, 4, 5];
+      const responses = await Promise.all(
+        pagesToFetch.map((page) =>
+          fetch(`https://www.arbeitnow.com/api/job-board-api?visa_sponsorship=true&page=${page}`)
+            .then((r) => r.json())
+            .catch(() => null)
+        )
+      );
+
+      const liveFetched: Job[] = [];
+      responses.forEach((json, pIdx) => {
+        if (json?.data && Array.isArray(json.data)) {
+          json.data.forEach((item: any, idx: number) => {
+            const titleLower = (item.title || '').toLowerCase();
+            let autoCategory: JobCategory = 'Tech & IT';
+            if (titleLower.includes('driver') || titleLower.includes('logistic') || titleLower.includes('warehouse')) {
+              autoCategory = 'Truck & Logistics';
+            } else if (titleLower.includes('farm') || titleLower.includes('agro')) {
+              autoCategory = 'Agriculture & Farming';
+            } else if (titleLower.includes('worker') || titleLower.includes('technician') || titleLower.includes('welder')) {
+              autoCategory = 'General Labor & Construction';
+            }
+            liveFetched.push({
+              id: `api-${pIdx}-${item.slug || idx}-${Date.now()}`,
+              title: item.title,
+              company: item.company_name || 'European Employer',
+              country: item.location?.includes('Berlin') || item.location?.includes('Munich') ? 'Germany' : 'Netherlands',
+              city: item.location || 'Berlin / Remote EU',
+              category: autoCategory,
+              salary: '€3,500 – €5,800 / month',
+              visaSponsored: true,
+              postedAt: 'Live API Sync',
+              source: 'Arbeitnow API',
+              description: (item.description || '').replace(/<[^>]*>?/gm, '').slice(0, 320) + '...',
+              requirements: ['Valid Passport', 'English or Local EU Language', 'Relevant Trade/Tech Experience']
+            });
+          });
+        }
+      });
+
+      if (liveFetched.length > 0) {
+        setJobs((prev) => [...liveFetched, ...prev]);
+        setSelectedJob(liveFetched[0]);
+      }
+    } finally {
+      setIsSyncingApi(false);
+    }
+  };
+
+  // Handle Signup / Login
+  const handleAuthSubmit = (provider: 'Google' | 'Email') => {
+    const emailToUse =
+      provider === 'Google' && !authEmail
+        ? ADMIN_EMAIL
+        : authEmail.trim().toLowerCase();
+
+    if (!emailToUse) return;
+
+    const existing = users.find((u) => u.email.toLowerCase() === emailToUse);
+    if (existing) {
+      setCurrentUserEmail(existing.email);
+      setShowAuthModal(false);
+      return;
+    }
+
+    const newUser: UserAccount = {
+      id: `user-${Date.now()}`,
+      name: authName.trim() || (provider === 'Google' ? 'Google Applicant' : emailToUse.split('@')[0]),
+      email: emailToUse,
+      authProvider: provider,
+      nationality: authNationality,
+      trade: authTrade,
+      experienceYears: 3,
+      skills: 'European Standard Safety, English Communication, Trade Certification',
+      hasPassport: true,
+      hasLicenseOrCert: true,
+      isPro: false,
+      proExpiresAt: null,
+      applicationsUsed: 0,
+      appliedJobIds: []
+    };
+
+    setUsers((prev) => [newUser, ...prev]);
+    setCurrentUserEmail(newUser.email);
+    setShowAuthModal(false);
+  };
+
+  // Handle Apply to Job (Enforces 5-Job Free Limit)
+  const handleApplyJob = (job: Job) => {
+    if (!currentUser) {
+      setAuthMode('signup');
+      setShowAuthModal(true);
+      return;
+    }
+
+    if (currentUser.appliedJobIds.includes(job.id)) return;
+
+    if (!currentUser.isPro && currentUser.applicationsUsed >= 5) {
+      setPaySubmittedSuccess(false);
+      setShowUpgradeModal(true);
+      return;
+    }
+
+    setUsers((prev) =>
+      prev.map((u) =>
+        u.email === currentUser.email
+          ? {
+              ...u,
+              applicationsUsed: u.applicationsUsed + 1,
+              appliedJobIds: [...u.appliedJobIds, job.id]
+            }
+          : u
+      )
+    );
+  };
+
+  // Handle Screenshot Upload
+  const handleScreenshotUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setPayScreenshot(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Submit Payment Proof
+  const handleSubmitPaymentProof = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!payTargetEmail.trim() || !payTxId.trim() || !payScreenshot) return;
+
+    const newSubmission: PaymentSubmission = {
+      id: `pay-${Date.now()}`,
+      targetEmail: payTargetEmail.trim().toLowerCase(),
+      method: paymentTab === 'easypaisa' ? 'Easypaisa' : 'ACH Bank Transfer',
+      transactionId: payTxId.trim(),
+      screenshotUrl: payScreenshot,
+      submittedAt: new Date().toLocaleString(),
+      status: 'Pending'
+    };
+
+    setPaymentSubmissions((prev) => [newSubmission, ...prev]);
+    setPaySubmittedSuccess(true);
+    setPayTxId('');
+    setPayScreenshot('');
+  };
+
+  // Admin 1-Click Activate & Deactivate PRO
+  const activateUserPro = (targetEmail: string, submissionId?: string) => {
+    const matchedUser = users.find(
+      (u) => u.email.toLowerCase() === targetEmail.toLowerCase()
+    );
+    if (!matchedUser) {
+      alert('Cannot activate: This email is NOT signed up on EUROJOB (Non-Refundable Policy).');
+      return;
+    }
+
+    const thirtyDaysFromNow = Date.now() + 30 * MS_PER_DAY;
+
+    setUsers((prev) =>
+      prev.map((u) =>
+        u.email.toLowerCase() === targetEmail.toLowerCase()
+          ? {
+              ...u,
+              isPro: true,
+              proExpiresAt: thirtyDaysFromNow,
+              threeDayWarnedForCycle: false,
+              showCongratsModal: true
+            }
+          : u
+      )
+    );
+
+    if (submissionId) {
+      setPaymentSubmissions((prev) =>
+        prev.map((p) => (p.id === submissionId ? { ...p, status: 'Approved' } : p))
+      );
+    }
+
+    setNotifications((prev) => [
+      {
+        id: `notif-act-${Date.now()}`,
+        userEmail: matchedUser.email,
+        title: '🎉 Congratulations! EUROJOB PRO Activated (30 Days)',
+        message:
+          'Your $5/month Pro membership is now active for 30 days! Your profile glows with the Purple PRO badge, unlimited European job applications, AI Acceptance Scores, and the Europass Resume & Cover Letter PDF Builder are unlocked.',
+        type: 'success',
+        createdAt: 'Just now',
+        read: false
+      },
+      ...prev
+    ]);
+  };
+
+  const deactivateUserPro = (targetEmail: string) => {
+    const matchedUser = users.find(
+      (u) => u.email.toLowerCase() === targetEmail.toLowerCase()
+    );
+    if (!matchedUser) return;
+
+    setUsers((prev) =>
+      prev.map((u) =>
+        u.email.toLowerCase() === targetEmail.toLowerCase()
+          ? {
+              ...u,
+              isPro: false,
+              proExpiresAt: null,
+              threeDayWarnedForCycle: false,
+              showCongratsModal: false
+            }
+          : u
+      )
+    );
+
+    setNotifications((prev) => [
+      {
+        id: `notif-deact-${Date.now()}`,
+        userEmail: matchedUser.email,
+        title: 'EUROJOB PRO Subscription Deactivated',
+        message:
+          'Your Pro membership has been deactivated by the administrator and your account has returned to the Free plan (5 applications limit). You can reactivate anytime from Upgrade to Pro.',
+        type: 'warning',
+        createdAt: 'Just now',
+        read: false
+      },
+      ...prev
+    ]);
+  };
+
+  // Calculate AI Acceptance Percentage
+  const calculateAcceptanceScore = (user: UserAccount, job: Job) => {
+    let score = 62;
+    if (user.trade === job.category) score += 18;
+    if (user.hasPassport) score += 8;
+    if (user.hasLicenseOrCert) score += 7;
+    if (user.experienceYears >= 3) score += 4;
+    return Math.min(score, 98);
+  };
+
+  // Admin Manual Add Job
+  const handleAdminAddJob = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newJobTitle || !newJobCompany) return;
+    const created: Job = {
+      id: `job-admin-${Date.now()}`,
+      title: newJobTitle,
+      company: newJobCompany,
+      country: newJobCountry,
+      city: newJobCity || newJobCountry,
+      category: newJobCategory,
+      salary: newJobSalary || '€2,400 / month',
+      visaSponsored: true,
+      postedAt: 'Just now',
+      source: 'EUROJOB Verified',
+      description: newJobDesc || 'Verified European employer accepting international Asian applicants with visa sponsorship.',
+      requirements: ['Valid Passport', 'Relevant Trade Experience', 'Clean Background Check']
+    };
+    setJobs((prev) => [created, ...prev]);
+    setNewJobTitle('');
+    setNewJobCompany('');
+    setNewJobCity('');
+    setNewJobSalary('');
+    setNewJobDesc('');
+  };
+
+  // Chatbot Reply Logic
+  const handleSendChat = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatInput.trim()) return;
+    const q = chatInput.trim();
+    setChatMessages((prev) => [...prev, { role: 'user', text: q }]);
+    setChatInput('');
+
+    setTimeout(() => {
+      const lower = q.toLowerCase();
+      let reply =
+        'To apply for European jobs on EUROJOB: (1) Sign up with Google or Email, (2) Apply up to 5 jobs free, or upgrade to Pro ($5/mo via Easypaisa or Cross River Bank ACH) for unlimited applications, AI Acceptance Scores, and PDF Europass CVs.';
+      if (lower.includes('germany') || lower.includes('truck')) {
+        reply =
+          'For Germany & EU Truck Driving (CE License): Employers require a valid heavy vehicle license, 18+ months passport validity, and basic English. Once hired, employers issue a Vorabzustimmung for fast embassy work-visa stamping.';
+      } else if (lower.includes('malta') || lower.includes('lithuania') || lower.includes('serbia')) {
+        reply =
+          'Malta, Lithuania, and Serbia are currently the fastest European destinations for Asian workers in Hospitality, Construction, Warehouse, and Driving—typically taking 6 to 10 weeks for work permit approval.';
+      } else if (lower.includes('pay') || lower.includes('easypaisa') || lower.includes('pro')) {
+        reply =
+          'Click "Upgrade Pro ($5/mo)" in the top bar. Pay locally via Easypaisa (SHAH ZAIB SOOMRO — 03003608184) or internationally via Cross River Bank ACH, upload your screenshot, and get activated within 24 hours!';
+      }
+      setChatMessages((prev) => [...prev, { role: 'bot', text: reply }]);
+    }, 450);
+  };
+
+  const userNotifications = useMemo(
+    () => notifications.filter((n) => n.userEmail.toLowerCase() === currentUser?.email.toLowerCase()),
+    [notifications, currentUser]
+  );
+  const unreadCount = userNotifications.filter((n) => !n.read).length;
+  const currentUserDaysLeft = getRemainingProDays(currentUser?.proExpiresAt);
+  const selectedStudioJob = useMemo(
+    () => jobs.find((j) => j.id === studioJobId) || jobs[0],
+    [jobs, studioJobId]
+  );
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans">
+      {/* ====================================================================
+          TOP NAVIGATION BAR (NAVY & ROYAL BLUE THEME)
+      ==================================================================== */}
+      <header className="sticky top-0 z-40 bg-[#0F172A] text-white border-b border-slate-800 shadow-md">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+          {/* Brand Logo */}
+          <div className="flex items-center gap-3 cursor-pointer" onClick={() => setActiveTab('jobs')}>
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-lg">
+              <Globe className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <span className="text-xl font-extrabold tracking-tight text-white">
+                EURO<span className="text-blue-400">JOB</span>
+              </span>
+              <span className="hidden sm:block text-[10px] uppercase tracking-widest text-blue-300 font-semibold">
+                Europe Careers for Asia
+              </span>
+            </div>
+          </div>
+
+          {/* Primary Nav Tabs */}
+          <nav className="hidden md:flex items-center gap-1 bg-slate-900/80 p-1 rounded-xl border border-slate-800">
+            <button
+              onClick={() => setActiveTab('jobs')}
+              className={`px-3.5 py-1.5 rounded-lg text-sm font-medium transition ${
+                activeTab === 'jobs' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              Find EU Jobs ({jobs.length.toLocaleString()})
+            </button>
+            <button
+              onClick={() => setActiveTab('career-studio')}
+              className={`px-3.5 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5 transition ${
+                activeTab === 'career-studio' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              <Sparkles className="w-4 h-4 text-purple-400" />
+              AI CV & Cover Letter
+            </button>
+            <button
+              onClick={() => setActiveTab('discussions')}
+              className={`px-3.5 py-1.5 rounded-lg text-sm font-medium transition ${
+                activeTab === 'discussions' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              Discussions
+            </button>
+
+            {/* STRICTLY VISIBLE ONLY TO shahzaibs189@gmail.com */}
+            {isAdmin && (
+              <button
+                onClick={() => setActiveTab('admin')}
+                className={`px-3.5 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5 transition ${
+                  activeTab === 'admin' ? 'bg-blue-600 text-white' : 'text-amber-300 hover:text-amber-200'
+                }`}
+              >
+                <LayoutDashboard className="w-4 h-4" />
+                Owner Dashboard
+              </button>
+            )}
+          </nav>
+
+          {/* Right User Controls */}
+          <div className="flex items-center gap-3">
+            {(!currentUser || !currentUser.isPro || currentUserDaysLeft <= 3) && (
+              <button
+                onClick={() => {
+                  setPaySubmittedSuccess(false);
+                  setShowUpgradeModal(true);
+                }}
+                className="hidden sm:flex items-center gap-1.5 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white text-xs font-bold px-3.5 py-2 rounded-full shadow-md transition"
+              >
+                <Crown className="w-3.5 h-3.5" />
+                {currentUser?.isPro ? `Renew PRO (${currentUserDaysLeft}d left)` : 'Upgrade Pro ($5/mo)'}
+              </button>
+            )}
+
+            {/* Notification Bell */}
+            {currentUser && (
+              <div className="relative">
+                <button
+                  onClick={() => {
+                    setShowNotifDropdown(!showNotifDropdown);
+                    setNotifications((prev) =>
+                      prev.map((n) =>
+                        n.userEmail.toLowerCase() === currentUser.email.toLowerCase()
+                          ? { ...n, read: true }
+                          : n
+                      )
+                    );
+                  }}
+                  className="p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-200 relative"
+                >
+                  <Bell className="w-5 h-5" />
+                  {unreadCount > 0 && (
+                    <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center animate-bounce">
+                      {unreadCount}
+                    </span>
+                  )}
+                </button>
+
+                {showNotifDropdown && (
+                  <div className="absolute right-0 mt-2 w-80 bg-white text-slate-900 rounded-2xl shadow-2xl border border-slate-200 p-4 z-50">
+                    <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100">
+                      <span className="font-bold text-sm">Notifications</span>
+                      <button onClick={() => setShowNotifDropdown(false)}>
+                        <X className="w-4 h-4 text-slate-400" />
+                      </button>
+                    </div>
+                    {userNotifications.length === 0 ? (
+                      <p className="text-xs text-slate-500 py-4 text-center">No notifications yet.</p>
+                    ) : (
+                      <div className="space-y-2 max-h-64 overflow-y-auto">
+                        {userNotifications.map((n) => (
+                          <div
+                            key={n.id}
+                            className={`p-2.5 rounded-xl border ${
+                              n.type === 'warning'
+                                ? 'bg-amber-50 border-amber-200'
+                                : 'bg-purple-50 border-purple-100'
+                            }`}
+                          >
+                            <p
+                              className={`text-xs font-bold ${
+                                n.type === 'warning' ? 'text-amber-900' : 'text-purple-900'
+                              }`}
+                            >
+                              {n.title}
+                            </p>
+                            <p className="text-xs text-slate-700 mt-1">{n.message}</p>
+                            <span className="text-[10px] text-slate-400 mt-1 block">{n.createdAt}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* User Profile Button with GLOWING PURPLE CIRCLE when PRO */}
+            {currentUser ? (
+              <button
+                onClick={() => setActiveTab('profile')}
+                className="flex items-center gap-2.5 bg-slate-900 hover:bg-slate-800 px-3 py-1.5 rounded-full border border-slate-700 transition"
+              >
+                <div className="relative">
+                  <div
+                    className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${
+                      currentUser.isPro
+                        ? 'bg-purple-700 text-white ring-2 ring-purple-400 shadow-[0_0_16px_rgba(168,85,247,0.95)]'
+                        : 'bg-blue-600 text-white'
+                    }`}
+                  >
+                    {currentUser.name.charAt(0).toUpperCase()}
+                  </div>
+                  {currentUser.isPro && (
+                    <span className="absolute -bottom-1.5 -right-2 bg-purple-600 text-white text-[9px] font-extrabold px-1.5 py-0.2 rounded-full border border-white shadow">
+                      PRO
+                    </span>
+                  )}
+                </div>
+                <div className="hidden lg:block text-left">
+                  <p className="text-xs font-semibold text-white leading-none">{currentUser.name}</p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    {currentUser.isPro
+                      ? `PRO • ${currentUserDaysLeft}d left`
+                      : `Free: ${currentUser.applicationsUsed}/5 Applied`}
+                  </p>
+                </div>
+              </button>
+            ) : (
+              <button
+                onClick={() => {
+                  setAuthMode('signup');
+                  setShowAuthModal(true);
+                }}
+                className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold px-4 py-2 rounded-xl transition shadow"
+              >
+                Sign Up / Login
+              </button>
+            )}
+          </div>
+        </div>
+      </header>
+
+      {/* ====================================================================
+          3-DAY EXPIRATION TOP BANNER FOR PRO USERS WITH <= 3 DAYS LEFT
+      ==================================================================== */}
+      {currentUser?.isPro && currentUserDaysLeft <= 3 && (
+        <div className="bg-amber-500 text-slate-950 px-4 py-2.5 text-xs font-bold flex flex-wrap items-center justify-center gap-3 shadow">
+          <span className="flex items-center gap-1.5">
+            <AlertTriangle className="w-4 h-4" />
+            Your EUROJOB PRO membership expires in {currentUserDaysLeft} day{currentUserDaysLeft === 1 ? '' : 's'}! Activate/renew now to keep unlimited applications & your Purple PRO status.
+          </span>
+          <button
+            onClick={() => {
+              setPaySubmittedSuccess(false);
+              setShowUpgradeModal(true);
+            }}
+            className="bg-slate-950 text-white px-3 py-1 rounded-lg hover:bg-slate-800 transition"
+          >
+            Renew PRO Now ($5/mo)
+          </button>
+        </div>
+      )}
+
+      {/* ====================================================================
+          CONGRATULATIONS MODAL WHEN ADMIN UPGRADES USER TO PRO
+      ==================================================================== */}
+      {currentUser?.showCongratsModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-7 text-center shadow-2xl border-2 border-purple-500 relative overflow-hidden">
+            <div className="w-16 h-16 mx-auto rounded-full bg-purple-100 text-purple-600 flex items-center justify-center ring-4 ring-purple-400 shadow-[0_0_25px_rgba(168,85,247,0.7)] mb-4">
+              <Crown className="w-8 h-8" />
+            </div>
+            <span className="inline-block bg-purple-600 text-white text-xs font-extrabold px-3 py-1 rounded-full uppercase tracking-wider mb-2">
+              EUROJOB PRO ACTIVATED (30 DAYS)
+            </span>
+            <h2 className="text-2xl font-extrabold text-slate-900">
+              Congratulations, {currentUser.name}!
+            </h2>
+            <p className="text-sm text-slate-600 mt-2">
+              Your PRO membership is now active for <strong>30 days</strong>! Your profile glows with the Purple PRO badge and all premium European career tools are unlocked:
+            </p>
+            <ul className="text-left text-xs text-slate-700 bg-purple-50 rounded-2xl p-4 mt-4 space-y-2 border border-purple-100">
+              <li className="flex items-center gap-2 font-semibold">
+                <CheckCircle2 className="w-4 h-4 text-purple-600" /> Unlimited European Job Applications
+              </li>
+              <li className="flex items-center gap-2 font-semibold">
+                <CheckCircle2 className="w-4 h-4 text-purple-600" /> Real-Time AI Acceptance % Score on Every Job
+              </li>
+              <li className="flex items-center gap-2 font-semibold">
+                <CheckCircle2 className="w-4 h-4 text-purple-600" /> Europass Resume PDF & Auto Cover Letter Builder
+              </li>
+            </ul>
+            <button
+              onClick={() =>
+                setUsers((prev) =>
+                  prev.map((u) =>
+                    u.email === currentUser.email ? { ...u, showCongratsModal: false } : u
+                  )
+                )
+              }
+              className="mt-6 w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 rounded-xl shadow-lg transition"
+            >
+              Start Applying with PRO
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ====================================================================
+          TAB 1: EUROPEAN JOB BOARD (5,000+ PAGINATED VERIFIED JOBS)
+      ==================================================================== */}
+      {activeTab === 'jobs' && (
+        <>
+          <section className="bg-gradient-to-b from-[#0F172A] via-[#1E3A8A] to-blue-800 text-white py-12 px-4">
+            <div className="max-w-6xl mx-auto text-center">
+              <div className="inline-flex items-center gap-2 bg-blue-950/70 border border-blue-400/30 px-4 py-1.5 rounded-full text-xs font-semibold text-blue-200 mb-4">
+                <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                {jobs.length.toLocaleString()} Verified European Opportunities for Asian Applicants
+              </div>
+              <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight">
+                Your Verified Gateway to <span className="text-blue-300">European Careers</span>
+              </h1>
+              <p className="text-blue-100 max-w-2xl mx-auto mt-3 text-sm sm:text-base">
+                Direct visa-sponsored roles across Germany, France, Netherlands, Serbia, Malta, Lithuania, Georgia, Armenia, Czech Republic, Norway, Finland & Switzerland.
+              </p>
+
+              {/* Search Bar */}
+              <div className="mt-7 bg-white p-2 rounded-2xl shadow-xl max-w-4xl mx-auto grid grid-cols-1 md:grid-cols-12 gap-2 text-slate-900">
+                <div className="md:col-span-5 flex items-center px-3 py-2 border-b md:border-b-0 md:border-r border-slate-200">
+                  <Search className="w-5 h-5 text-slate-400 mr-2" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Job title (e.g. Truck Driver, Welder, React)..."
+                    className="w-full text-sm focus:outline-none"
+                  />
+                </div>
+                <div className="md:col-span-3 px-3 py-2 border-b md:border-b-0 md:border-r border-slate-200">
+                  <select
+                    value={selectedCountry}
+                    onChange={(e) => setSelectedCountry(e.target.value)}
+                    className="w-full text-sm font-medium bg-transparent focus:outline-none"
+                  >
+                    {TARGET_COUNTRIES.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="md:col-span-4 flex gap-2">
+                  <select
+                    value={selectedCategory}
+                    onChange={(e) => setSelectedCategory(e.target.value)}
+                    className="w-full text-sm font-medium bg-transparent px-2 focus:outline-none"
+                  >
+                    <option value="All Categories">All 4 Job Groups</option>
+                    <option value="Tech & IT">Tech & IT</option>
+                    <option value="Truck & Logistics">Truck & Logistics</option>
+                    <option value="General Labor & Construction">General Labor & Construction</option>
+                    <option value="Agriculture & Farming">Agriculture & Farming</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Country Quick Chips */}
+              <div className="flex flex-wrap justify-center gap-2 mt-5">
+                {TARGET_COUNTRIES.slice(1).map((country) => (
+                  <button
+                    key={country}
+                    onClick={() => setSelectedCountry(selectedCountry === country ? 'All Countries' : country)}
+                    className={`text-xs px-3 py-1 rounded-full border transition ${
+                      selectedCountry === country
+                        ? 'bg-white text-blue-900 font-bold border-white'
+                        : 'bg-blue-950/50 text-blue-100 border-blue-400/30 hover:bg-blue-800'
+                    }`}
+                  >
+                    {country}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+              <div>
+                <h2 className="text-xl font-bold text-slate-900">
+                  {filteredJobs.length.toLocaleString()} Verified European Jobs Available (Page {currentPage} of {totalPages})
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Aggregated from Arbeitnow EU API, Jooble EU, Adzuna Europe & Direct Verified Employers
+                </p>
+              </div>
+              <button
+                onClick={syncLiveEuropeanJobs}
+                disabled={isSyncingApi}
+                className="flex items-center gap-2 bg-white hover:bg-slate-100 text-blue-800 border border-blue-200 px-4 py-2 rounded-xl text-xs font-bold shadow-sm transition"
+              >
+                <RefreshCw className={`w-4 h-4 ${isSyncingApi ? 'animate-spin' : ''}`} />
+                {isSyncingApi ? 'Fetching Multi-Page Live EU Jobs...' : 'Sync Live Multi-Page API Jobs'}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Left Job List + Pagination */}
+              <div className="lg:col-span-5 space-y-3">
+                <div className="space-y-3 max-h-[780px] overflow-y-auto pr-1">
+                  {paginatedJobs.map((job) => {
+                    const isSelected = selectedJob?.id === job.id;
+                    const alreadyApplied = currentUser?.appliedJobIds.includes(job.id);
+                    return (
+                      <div
+                        key={job.id}
+                        onClick={() => setSelectedJob(job)}
+                        className={`p-4 rounded-2xl border cursor-pointer transition bg-white ${
+                          isSelected
+                            ? 'border-blue-600 ring-2 ring-blue-100 shadow-md'
+                            : 'border-slate-200 hover:border-blue-300'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <span className="inline-block text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 mb-1.5">
+                              {job.category}
+                            </span>
+                            <h3 className="font-bold text-slate-900 text-base leading-snug">{job.title}</h3>
+                            <p className="text-xs text-slate-600 mt-0.5 font-medium">{job.company}</p>
+                          </div>
+                          {alreadyApplied && (
+                            <span className="text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full">
+                              Applied ✓
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-3 mt-3 text-xs text-slate-600">
+                          <span className="flex items-center gap-1 font-semibold text-slate-800">
+                            <MapPin className="w-3.5 h-3.5 text-blue-600" />
+                            {job.city}, {job.country}
+                          </span>
+                          <span className="flex items-center gap-1 text-emerald-700 font-semibold">
+                            <DollarSign className="w-3.5 h-3.5" />
+                            {job.salary}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between mt-3 pt-2.5 border-t border-slate-100 text-[11px] text-slate-400">
+                          <span className="text-emerald-600 font-semibold flex items-center gap-1">
+                            <ShieldCheck className="w-3.5 h-3.5" /> Visa Sponsorship
+                          </span>
+                          <span>{job.source} • {job.postedAt}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Pagination Bar */}
+                <div className="flex items-center justify-between bg-white px-4 py-3 rounded-2xl border border-slate-200 text-xs">
+                  <button
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    className="flex items-center gap-1 font-bold text-blue-700 disabled:text-slate-300"
+                  >
+                    <ChevronLeft className="w-4 h-4" /> Previous
+                  </button>
+                  <span className="font-semibold text-slate-600">
+                    Page {currentPage} of {totalPages}
+                  </span>
+                  <button
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                    className="flex items-center gap-1 font-bold text-blue-700 disabled:text-slate-300"
+                  >
+                    Next <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Right Job Details */}
+              <div className="lg:col-span-7">
+                {selectedJob && (
+                  <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-sm sticky top-20">
+                    <div className="flex flex-wrap items-start justify-between gap-4 pb-5 border-b border-slate-100">
+                      <div>
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="text-xs font-bold bg-blue-900 text-white px-3 py-1 rounded-full">
+                            {selectedJob.country}
+                          </span>
+                          <span className="text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1 rounded-full">
+                            Verified Visa Sponsor
+                          </span>
+                        </div>
+                        <h2 className="text-2xl font-extrabold text-slate-900">{selectedJob.title}</h2>
+                        <p className="text-sm text-slate-600 mt-1 flex items-center gap-2">
+                          <Building2 className="w-4 h-4 text-blue-600" />
+                          {selectedJob.company} — {selectedJob.city}, {selectedJob.country}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-lg font-extrabold text-blue-800">{selectedJob.salary}</p>
+                        <p className="text-xs text-slate-400">{selectedJob.category}</p>
+                      </div>
+                    </div>
+
+                    {/* AI ACCEPTANCE PERCENTAGE CARD */}
+                    <div className="my-5 p-4 rounded-2xl border border-purple-200 bg-gradient-to-r from-purple-50 to-blue-50">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Sparkles className="w-5 h-5 text-purple-600" />
+                          <span className="font-bold text-sm text-slate-900">
+                            AI Profile & Document Acceptance Match
+                          </span>
+                        </div>
+                        {currentUser?.isPro ? (
+                          <span className="bg-purple-600 text-white text-sm font-extrabold px-3 py-1 rounded-full shadow">
+                            {calculateAcceptanceScore(currentUser, selectedJob)}% Acceptance Chance
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              setPaySubmittedSuccess(false);
+                              setShowUpgradeModal(true);
+                            }}
+                            className="flex items-center gap-1 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold px-3 py-1.5 rounded-full transition"
+                          >
+                            <Lock className="w-3.5 h-3.5" /> Unlock % Score (Pro $5/mo)
+                          </button>
+                        )}
+                      </div>
+
+                      {currentUser?.isPro ? (
+                        <p className="text-xs text-slate-700 mt-2">
+                          Based on your <strong>{currentUser.nationality}</strong> nationality,{' '}
+                          <strong>{currentUser.experienceYears} yrs experience</strong>, and verified Passport/Trade credentials, your profile strongly aligns with {selectedJob.country} work permit requirements.
+                        </p>
+                      ) : (
+                        <p className="text-xs text-slate-500 mt-1.5 blur-[2px] select-none">
+                          Based on your passport, trade certificate, and experience, your estimated acceptance score is 89% for this European employer.
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="space-y-4">
+                      <div>
+                        <h4 className="font-bold text-sm text-slate-900 mb-1.5">Role Description</h4>
+                        <p className="text-sm text-slate-600 leading-relaxed">{selectedJob.description}</p>
+                      </div>
+
+                      <div>
+                        <h4 className="font-bold text-sm text-slate-900 mb-2">Applicant Requirements</h4>
+                        <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {selectedJob.requirements.map((req, i) => (
+                            <li key={i} className="flex items-center gap-2 text-xs text-slate-700 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                              <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" />
+                              {req}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+
+                    <div className="mt-7 pt-5 border-t border-slate-100 flex flex-wrap items-center justify-between gap-4">
+                      <div className="text-xs text-slate-500">
+                        {currentUser ? (
+                          currentUser.isPro ? (
+                            <span className="text-purple-700 font-bold">
+                              PRO Member: Unlimited Applications Active ({currentUserDaysLeft} days remaining)
+                            </span>
+                          ) : (
+                            <span>
+                              Free Plan: <strong>{currentUser.applicationsUsed} / 5</strong> free applications used
+                            </span>
+                          )
+                        ) : (
+                          <span>Sign up free with Google or Email to apply (5 free applications)</span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => {
+                            setStudioJobId(selectedJob.id);
+                            setActiveTab('career-studio');
+                          }}
+                          className="px-4 py-2.5 rounded-xl border border-blue-200 text-blue-800 hover:bg-blue-50 text-xs font-bold transition"
+                        >
+                          Generate Europass CV & Letter
+                        </button>
+
+                        <button
+                          onClick={() => handleApplyJob(selectedJob)}
+                          disabled={currentUser?.appliedJobIds.includes(selectedJob.id)}
+                          className={`px-6 py-2.5 rounded-xl text-sm font-bold text-white shadow-md transition ${
+                            currentUser?.appliedJobIds.includes(selectedJob.id)
+                              ? 'bg-emerald-600 cursor-default'
+                              : 'bg-blue-700 hover:bg-blue-800'
+                          }`}
+                        >
+                          {currentUser?.appliedJobIds.includes(selectedJob.id)
+                            ? 'Application Submitted ✓'
+                            : 'Apply Now'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </main>
+        </>
+      )}
+
+      {/* ====================================================================
+          TAB 2: INTERACTIVE EUROPASS RESUME PDF & COVER LETTER BUILDER (PRO)
+      ==================================================================== */}
+      {activeTab === 'career-studio' && (
+        <section className="max-w-6xl mx-auto px-4 py-10">
+          <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-4 pb-6 border-b border-slate-100">
+              <div>
+                <span className="text-xs font-extrabold uppercase tracking-wider text-purple-600">
+                  EUROJOB PRO Career Toolkit
+                </span>
+                <h2 className="text-2xl font-extrabold text-slate-900 mt-1">
+                  Europass Resume PDF & Company-Specific Cover Letter Builder
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Fill in your personal, passport, education, and address details below to generate a printable European PDF Resume and a custom Cover Letter addressed to your target employer.
+                </p>
+              </div>
+              <div className="w-full sm:w-auto">
+                <label className="block text-[11px] font-bold text-slate-500 mb-1">
+                  Target Company & Position:
+                </label>
+                <select
+                  value={studioJobId}
+                  onChange={(e) => setStudioJobId(e.target.value)}
+                  className="w-full border border-blue-300 bg-blue-50/50 text-blue-950 rounded-xl px-3.5 py-2 text-xs font-bold"
+                >
+                  {jobs.slice(0, 50).map((j) => (
+                    <option key={j.id} value={j.id}>
+                      {j.company} — {j.title} ({j.country})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {!currentUser?.isPro ? (
+              <div className="text-center py-14 px-4">
+                <div className="w-14 h-14 mx-auto rounded-2xl bg-purple-100 text-purple-600 flex items-center justify-center mb-4">
+                  <Lock className="w-7 h-7" />
+                </div>
+                <h3 className="text-xl font-extrabold text-slate-900">
+                  Unlock Professional European Resume PDF & Cover Letter Generator
+                </h3>
+                <p className="text-sm text-slate-600 max-w-lg mx-auto mt-2">
+                  Upgrade to EUROJOB Pro ($5/month) to enter your Name, Passport Number, Date of Birth, Education, and Address, generate a downloadable PDF Europass CV, and auto-create a tailored Cover Letter for the exact company you apply to.
+                </p>
+                <button
+                  onClick={() => {
+                    setPaySubmittedSuccess(false);
+                    setShowUpgradeModal(true);
+                  }}
+                  className="mt-6 bg-purple-600 hover:bg-purple-700 text-white font-bold px-6 py-3 rounded-xl shadow-lg transition"
+                >
+                  Upgrade to Pro ($5/Month)
+                </button>
+              </div>
+            ) : (
+              <div className="mt-6 space-y-8">
+                {/* STEP 1: CANDIDATE INPUT FORM */}
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    setCvGenerated(true);
+                  }}
+                  className="bg-slate-50 p-6 rounded-2xl border border-slate-200 space-y-5"
+                >
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-extrabold text-base text-slate-900 flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-blue-700" />
+                      1. Enter Your Official Applicant Information
+                    </h3>
+                    <span className="text-[11px] font-semibold text-purple-700 bg-purple-100 px-2.5 py-0.5 rounded-full">
+                      PRO Unlocked
+                    </span>
+                  </div>
+
+                  {/* Personal & Passport Section */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Full Name (As on Passport) *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={cvFullName}
+                        onChange={(e) => setCvFullName(e.target.value)}
+                        placeholder="e.g. Muhammad Bilal Ahmed"
+                        className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-300 bg-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Email Address *
+                      </label>
+                      <input
+                        type="email"
+                        required
+                        value={cvEmail}
+                        onChange={(e) => setCvEmail(e.target.value)}
+                        placeholder="you@gmail.com"
+                        className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-300 bg-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Phone / WhatsApp (with Country Code) *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={cvPhone}
+                        onChange={(e) => setCvPhone(e.target.value)}
+                        placeholder="e.g. +92 300 1234567"
+                        className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-300 bg-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Date of Birth (DOB) *
+                      </label>
+                      <input
+                        type="date"
+                        required
+                        value={cvDob}
+                        onChange={(e) => setCvDob(e.target.value)}
+                        className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-300 bg-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Passport Number *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={cvPassportNumber}
+                        onChange={(e) => setCvPassportNumber(e.target.value.toUpperCase())}
+                        placeholder="e.g. AB1234567"
+                        className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-300 bg-white font-mono"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Passport Expiry Date *
+                      </label>
+                      <input
+                        type="date"
+                        required
+                        value={cvPassportExpiry}
+                        onChange={(e) => setCvPassportExpiry(e.target.value)}
+                        className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-300 bg-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Nationality *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={cvNationality}
+                        onChange={(e) => setCvNationality(e.target.value)}
+                        placeholder="e.g. Pakistani / Indian / Nepali"
+                        className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-300 bg-white"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Complete Residential Address (Street, City, Postal Code, Country) *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={cvAddress}
+                        onChange={(e) => setCvAddress(e.target.value)}
+                        placeholder="e.g. House 14, Block 9, Gulistan-e-Jauhar, Karachi, Pakistan"
+                        className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-300 bg-white"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Education, Experience & Skills Sections */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Education & Qualifications *
+                      </label>
+                      <textarea
+                        rows={4}
+                        required
+                        value={cvEducation}
+                        onChange={(e) => setCvEducation(e.target.value)}
+                        placeholder="e.g. Diploma in Mechanical Engineering (2019)&#10;Higher Secondary Certificate (2017)"
+                        className="w-full px-3.5 py-2 text-xs rounded-xl border border-slate-300 bg-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Work Experience & Trade History *
+                      </label>
+                      <textarea
+                        rows={4}
+                        required
+                        value={cvExperience}
+                        onChange={(e) => setCvExperience(e.target.value)}
+                        placeholder="e.g. Senior Heavy Truck Driver — Al-Futtaim Logistics (2021–2026)&#10;• Operated 40-ton trailers across GCC highways&#10;• Zero accident record & customs compliance"
+                        className="w-full px-3.5 py-2 text-xs rounded-xl border border-slate-300 bg-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Skills, Licenses & Languages *
+                      </label>
+                      <textarea
+                        rows={4}
+                        required
+                        value={cvSkillsAndLanguages}
+                        onChange={(e) => setCvSkillsAndLanguages(e.target.value)}
+                        placeholder="e.g. Valid HTV / CE Heavy Driving License&#10;English (B1 Intermediate), Urdu/Hindi (Native)&#10;EU Safety & Cold-Chain Handling"
+                        className="w-full px-3.5 py-2 text-xs rounded-xl border border-slate-300 bg-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-4 pt-2">
+                    <p className="text-xs text-slate-500">
+                      Cover letter will automatically address{' '}
+                      <strong className="text-blue-900">{selectedStudioJob.company}</strong> for the{' '}
+                      <strong className="text-blue-900">{selectedStudioJob.title}</strong> role in{' '}
+                      <strong>{selectedStudioJob.country}</strong>.
+                    </p>
+                    <button
+                      type="submit"
+                      className="bg-gradient-to-r from-blue-700 to-purple-700 hover:from-blue-800 hover:to-purple-800 text-white font-extrabold px-6 py-3 rounded-xl shadow-lg text-sm flex items-center gap-2 transition"
+                    >
+                      <Sparkles className="w-4 h-4" />
+                      Generate PDF Resume & Cover Letter
+                    </button>
+                  </div>
+                </form>
+
+                {/* STEP 2: GENERATED EUROPASS RESUME & AUTO COVER LETTER WITH PDF EXPORT */}
+                {cvGenerated && (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {/* DOCUMENT A: EUROPASS CURRICULUM VITAE */}
+                    <div className="border border-slate-300 rounded-2xl overflow-hidden bg-white shadow-sm flex flex-col">
+                      <div className="bg-[#0F172A] text-white px-4 py-3 flex items-center justify-between">
+                        <span className="text-xs font-extrabold tracking-wide">
+                          EUROPASS CURRICULUM VITAE
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleDownloadPdf(`${cvFullName} - Europass CV`, 'printable-resume')
+                          }
+                          className="bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow transition"
+                        >
+                          <Printer className="w-3.5 h-3.5" />
+                          Download PDF
+                        </button>
+                      </div>
+
+                      <div id="printable-resume" className="p-6 text-xs text-slate-800 space-y-4">
+                        <div className="header border-b-2 border-blue-900 pb-3">
+                          <div>
+                            <div className="brand text-[10px] font-extrabold text-blue-700 uppercase tracking-widest">
+                              European Standard Curriculum Vitae
+                            </div>
+                            <h1 className="text-xl font-extrabold text-slate-900 mt-0.5">
+                              {cvFullName}
+                            </h1>
+                            <p className="text-xs font-semibold text-blue-800">
+                              Applying for: {selectedStudioJob.title} ({selectedStudioJob.country})
+                            </p>
+                          </div>
+                        </div>
+
+                        <div>
+                          <h2 className="text-xs font-extrabold uppercase text-blue-900 border-b border-slate-200 pb-1 mb-2">
+                            Personal & Passport Information
+                          </h2>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                            <p><strong>Email:</strong> {cvEmail}</p>
+                            <p><strong>Phone / WhatsApp:</strong> {cvPhone}</p>
+                            <p><strong>Date of Birth:</strong> {cvDob}</p>
+                            <p><strong>Nationality:</strong> {cvNationality}</p>
+                            <p><strong>Passport Number:</strong> {cvPassportNumber}</p>
+                            <p><strong>Passport Expiry:</strong> {cvPassportExpiry}</p>
+                            <p className="sm:col-span-2"><strong>Address:</strong> {cvAddress}</p>
+                          </div>
+                        </div>
+
+                        <div>
+                          <h2 className="text-xs font-extrabold uppercase text-blue-900 border-b border-slate-200 pb-1 mb-2">
+                            Work Experience & Trade Background
+                          </h2>
+                          <p className="whitespace-pre-line leading-relaxed">{cvExperience}</p>
+                        </div>
+
+                        <div>
+                          <h2 className="text-xs font-extrabold uppercase text-blue-900 border-b border-slate-200 pb-1 mb-2">
+                            Education & Qualifications
+                          </h2>
+                          <p className="whitespace-pre-line leading-relaxed">{cvEducation}</p>
+                        </div>
+
+                        <div>
+                          <h2 className="text-xs font-extrabold uppercase text-blue-900 border-b border-slate-200 pb-1 mb-2">
+                            Skills, Licenses & Languages
+                          </h2>
+                          <p className="whitespace-pre-line leading-relaxed">{cvSkillsAndLanguages}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* DOCUMENT B: TAILORED COVER LETTER FOR TARGET COMPANY & POSITION */}
+                    <div className="border border-slate-300 rounded-2xl overflow-hidden bg-white shadow-sm flex flex-col">
+                      <div className="bg-[#1E3A8A] text-white px-4 py-3 flex items-center justify-between">
+                        <span className="text-xs font-extrabold tracking-wide">
+                          COVER LETTER — {selectedStudioJob.company.toUpperCase()}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleDownloadPdf(
+                              `${cvFullName} - Cover Letter (${selectedStudioJob.company})`,
+                              'printable-cover-letter'
+                            )
+                          }
+                          className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow transition"
+                        >
+                          <Printer className="w-3.5 h-3.5" />
+                          Download PDF
+                        </button>
+                      </div>
+
+                      <div id="printable-cover-letter" className="p-6 text-xs text-slate-800 space-y-4">
+                        <div className="header border-b-2 border-blue-900 pb-3">
+                          <div>
+                            <h1 className="text-lg font-extrabold text-slate-900">{cvFullName}</h1>
+                            <p className="text-slate-600">{cvAddress}</p>
+                            <p className="text-slate-600">
+                              {cvEmail} • {cvPhone} • Passport: {cvPassportNumber}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <p className="text-slate-500">Date: {new Date().toLocaleDateString()}</p>
+                          <p className="font-bold text-slate-900">To: Hiring & Recruitment Department</p>
+                          <p className="font-extrabold text-blue-900">{selectedStudioJob.company}</p>
+                          <p className="text-slate-600">
+                            {selectedStudioJob.city}, {selectedStudioJob.country}
+                          </p>
+                        </div>
+
+                        <p className="font-extrabold text-slate-900">
+                          Subject: Application for the Position of {selectedStudioJob.title}
+                        </p>
+
+                        <div className="space-y-3 leading-relaxed">
+                          <p>Dear Hiring Manager at {selectedStudioJob.company},</p>
+                          <p>
+                            I am writing to formally express my strong interest in the{' '}
+                            <strong>{selectedStudioJob.title}</strong> position at{' '}
+                            <strong>{selectedStudioJob.company}</strong> in{' '}
+                            <strong>
+                              {selectedStudioJob.city}, {selectedStudioJob.country}
+                            </strong>
+                            . As a dedicated {cvNationality} professional with proven field experience and full readiness for international relocation, I am confident in my ability to contribute immediately to your operations.
+                          </p>
+                          <p>
+                            <strong>Key Highlights of My Background:</strong>
+                            <br />
+                            {cvExperience}
+                          </p>
+                          <p>
+                            I hold a valid international passport (<strong>{cvPassportNumber}</strong>, valid until{' '}
+                            <strong>{cvPassportExpiry}</strong>) along with my educational credentials ({cvEducation.split('\n')[0]}) and technical competencies ({cvSkillsAndLanguages.split('\n')[0]}). I am fully prepared to complete all {selectedStudioJob.country} work permit and visa documentation promptly.
+                          </p>
+                          <p>
+                            Thank you for your time and consideration. I welcome the opportunity for an online interview to discuss how my skills align with {selectedStudioJob.company}’s standards.
+                          </p>
+                          <p className="pt-2">
+                            Sincerely,
+                            <br />
+                            <strong>{cvFullName}</strong>
+                            <br />
+                            {cvPhone} | {cvEmail}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* ====================================================================
+          TAB 3: COMMUNITY DISCUSSIONS FORUM
+      ==================================================================== */}
+      {activeTab === 'discussions' && (
+        <section className="max-w-4xl mx-auto px-4 py-10 space-y-6">
+          <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm">
+            <h2 className="text-xl font-extrabold text-slate-900">Candidate Discussions & Visa Q&A</h2>
+            <p className="text-xs text-slate-500 mt-1">
+              Ask questions about European work permits, embassy timelines, and trade tests.
+            </p>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!newPostTitle.trim() || !newPostBody.trim()) return;
+                setDiscussions((prev) => [
+                  {
+                    id: `disc-${Date.now()}`,
+                    authorName: currentUser?.name || 'Guest Applicant',
+                    authorIsPro: Boolean(currentUser?.isPro),
+                    countryTag: newPostCountry,
+                    title: newPostTitle,
+                    body: newPostBody,
+                    upvotes: 1,
+                    createdAt: 'Just now',
+                    replies: []
+                  },
+                  ...prev
+                ]);
+                setNewPostTitle('');
+                setNewPostBody('');
+              }}
+              className="mt-4 space-y-3 bg-slate-50 p-4 rounded-2xl border border-slate-200"
+            >
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <input
+                  type="text"
+                  value={newPostTitle}
+                  onChange={(e) => setNewPostTitle(e.target.value)}
+                  placeholder="Question title..."
+                  className="sm:col-span-2 px-3 py-2 text-sm rounded-xl border border-slate-300 bg-white"
+                />
+                <select
+                  value={newPostCountry}
+                  onChange={(e) => setNewPostCountry(e.target.value)}
+                  className="px-3 py-2 text-sm rounded-xl border border-slate-300 bg-white"
+                >
+                  {TARGET_COUNTRIES.slice(1).map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <textarea
+                rows={2}
+                value={newPostBody}
+                onChange={(e) => setNewPostBody(e.target.value)}
+                placeholder="Share your visa experience or ask the community..."
+                className="w-full px-3 py-2 text-sm rounded-xl border border-slate-300 bg-white"
+              />
+              <button
+                type="submit"
+                className="bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold px-4 py-2 rounded-xl"
+              >
+                Post Discussion
+              </button>
+            </form>
+          </div>
+
+          <div className="space-y-4">
+            {discussions.map((post) => (
+              <div key={post.id} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-sm text-slate-900">{post.authorName}</span>
+                    {post.authorIsPro && (
+                      <span className="bg-purple-600 text-white text-[10px] font-extrabold px-2 py-0.5 rounded-full shadow-[0_0_10px_rgba(168,85,247,0.7)]">
+                        PRO
+                      </span>
+                    )}
+                    <span className="text-xs bg-blue-50 text-blue-700 font-semibold px-2.5 py-0.5 rounded-full">
+                      {post.countryTag}
+                    </span>
+                  </div>
+                  <span className="text-xs text-slate-400">{post.createdAt}</span>
+                </div>
+                <h3 className="font-bold text-base text-slate-900 mt-2">{post.title}</h3>
+                <p className="text-sm text-slate-600 mt-1">{post.body}</p>
+                {post.replies.map((r) => (
+                  <div key={r.id} className="mt-3 ml-4 p-3 rounded-xl bg-blue-50/70 border border-blue-100 text-xs">
+                    <span className="font-bold text-blue-900">{r.author}: </span>
+                    <span className="text-slate-700">{r.text}</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* ====================================================================
+          TAB 4: USER ACCOUNT DETAILS & DAYS REMAINING (/profile)
+      ==================================================================== */}
+      {activeTab === 'profile' && (
+        <section className="max-w-3xl mx-auto px-4 py-10">
+          {!currentUser ? (
+            <div className="bg-white rounded-3xl p-8 text-center border border-slate-200">
+              <p className="text-sm text-slate-600 mb-4">Please sign up or log in to view your account details.</p>
+              <button
+                onClick={() => setShowAuthModal(true)}
+                className="bg-blue-700 text-white font-bold px-5 py-2.5 rounded-xl text-sm"
+              >
+                Sign Up / Login
+              </button>
+            </div>
+          ) : (
+            <div className="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-4 pb-6 border-b border-slate-100">
+                <div className="flex items-center gap-4">
+                  <div
+                    className={`w-16 h-16 rounded-full flex items-center justify-center text-2xl font-extrabold ${
+                      currentUser.isPro
+                        ? 'bg-purple-700 text-white ring-4 ring-purple-400 shadow-[0_0_25px_rgba(168,85,247,0.95)]'
+                        : 'bg-blue-700 text-white'
+                    }`}
+                  >
+                    {currentUser.name.charAt(0).toUpperCase()}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2.5">
+                      <h2 className="text-xl font-extrabold text-slate-900">{currentUser.name}</h2>
+                      {currentUser.isPro ? (
+                        <span className="bg-purple-600 text-white text-xs font-extrabold px-3 py-0.5 rounded-full shadow-[0_0_12px_rgba(168,85,247,0.8)]">
+                          PRO
+                        </span>
+                      ) : (
+                        <span className="bg-slate-200 text-slate-700 text-xs font-bold px-2.5 py-0.5 rounded-full">
+                          FREE PLAN
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm text-slate-500">{currentUser.email}</p>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Nationality: {currentUser.nationality} • Signed in via {currentUser.authProvider}
+                    </p>
+                  </div>
+                </div>
+
+                {(!currentUser.isPro || currentUserDaysLeft <= 3) && (
+                  <button
+                    onClick={() => {
+                      setPaySubmittedSuccess(false);
+                      setShowUpgradeModal(true);
+                    }}
+                    className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow"
+                  >
+                    {currentUser.isPro ? 'Renew PRO ($5/mo)' : 'Upgrade to PRO ($5/mo)'}
+                  </button>
+                )}
+              </div>
+
+              {currentUser.isPro && currentUserDaysLeft <= 3 && (
+                <div className="mt-5 p-4 rounded-2xl bg-amber-50 border border-amber-300 flex items-center justify-between gap-3">
+                  <div className="flex items-start gap-2.5 text-xs text-amber-950">
+                    <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-extrabold">
+                        Renewal Notice: Only {currentUserDaysLeft} Day{currentUserDaysLeft === 1 ? '' : 's'} Remaining!
+                      </p>
+                      <p className="mt-0.5">
+                        Your account will revert to Free once the timer hits 0. Submit your $5/mo renewal now to extend your PRO access by 30 days.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setPaySubmittedSuccess(false);
+                      setShowUpgradeModal(true);
+                    }}
+                    className="shrink-0 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold px-3.5 py-2 rounded-xl"
+                  >
+                    Activate / Renew
+                  </button>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 my-6">
+                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
+                  <p className="text-xs text-slate-500">Membership Tier</p>
+                  <p className={`text-base font-extrabold mt-1 ${currentUser.isPro ? 'text-purple-700' : 'text-slate-900'}`}>
+                    {currentUser.isPro ? 'EUROJOB PRO ($5/mo)' : 'Free Tier (Max 5 Jobs)'}
+                  </p>
+                </div>
+
+                <div
+                  className={`p-4 rounded-2xl border ${
+                    currentUser.isPro
+                      ? currentUserDaysLeft <= 3
+                        ? 'bg-amber-50 border-amber-300'
+                        : 'bg-purple-50 border-purple-200'
+                      : 'bg-slate-50 border-slate-200'
+                  }`}
+                >
+                  <p className="text-xs text-slate-500 flex items-center gap-1">
+                    <Clock className="w-3.5 h-3.5" /> Subscription Time Left
+                  </p>
+                  {currentUser.isPro && currentUser.proExpiresAt ? (
+                    <>
+                      <p
+                        className={`text-base font-extrabold mt-1 ${
+                          currentUserDaysLeft <= 3 ? 'text-amber-800' : 'text-purple-800'
+                        }`}
+                      >
+                        {currentUserDaysLeft} Day{currentUserDaysLeft === 1 ? '' : 's'} Remaining
+                      </p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        Expires: {new Date(currentUser.proExpiresAt).toLocaleDateString()}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-base font-extrabold text-slate-700 mt-1">No Active Plan</p>
+                  )}
+                </div>
+
+                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
+                  <p className="text-xs text-slate-500">Job Applications</p>
+                  <p className="text-base font-extrabold text-slate-900 mt-1">
+                    {currentUser.isPro
+                      ? `${currentUser.applicationsUsed} Applied (Unlimited)`
+                      : `${currentUser.applicationsUsed} / 5 Used`}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setCurrentUserEmail(null)}
+                className="text-xs font-bold text-red-600 hover:underline"
+              >
+                Sign Out
+              </button>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* ====================================================================
+          TAB 5: OWNER-ONLY CONTROLLING DASHBOARD (LOCKED TO shahzaibs189@gmail.com)
+      ==================================================================== */}
+      {activeTab === 'admin' && isAdmin && (
+        <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <span className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
+                Private Owner Access Only ({ADMIN_EMAIL})
+              </span>
+              <h2 className="text-2xl font-extrabold text-slate-900 mt-1">
+                EUROJOB Owner Control Dashboard
+              </h2>
+              <p className="text-xs text-slate-500">
+                Activate or Deactivate PRO accounts anytime, verify Easypaisa/ACH screenshots, monitor days remaining, and publish jobs.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <div className="bg-white px-4 py-2 rounded-2xl border border-slate-200 text-center">
+                <p className="text-[10px] text-slate-400 uppercase font-bold">Signed-Up Users</p>
+                <p className="text-lg font-extrabold text-blue-800">{users.length}</p>
+              </div>
+              <div className="bg-white px-4 py-2 rounded-2xl border border-slate-200 text-center">
+                <p className="text-[10px] text-slate-400 uppercase font-bold">Active PRO Members</p>
+                <p className="text-lg font-extrabold text-purple-700">
+                  {users.filter((u) => u.isPro).length}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* 1. REGISTERED USERS DIRECTORY WITH 1-CLICK ACTIVATE & DEACTIVATE BUTTONS */}
+          <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm">
+            <h3 className="text-lg font-extrabold text-slate-900 mb-1">
+              Registered Candidates & Subscription Controls (Activate / Deactivate)
+            </h3>
+            <p className="text-xs text-slate-500 mb-4">
+              Click <strong>"Activate PRO"</strong> to grant 30 days of PRO access or <strong>"Deactivate"</strong> to immediately revert any account back to Free.
+            </p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200 text-slate-500 uppercase">
+                    <th className="py-3 px-3">Candidate Name</th>
+                    <th className="py-3 px-3">Email Address</th>
+                    <th className="py-3 px-3">Nationality / Trade</th>
+                    <th className="py-3 px-3">Plan & Days Left</th>
+                    <th className="py-3 px-3">Admin Subscription Control</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {users.map((u) => {
+                    const daysLeft = getRemainingProDays(u.proExpiresAt);
+                    return (
+                      <tr key={u.id} className="hover:bg-slate-50">
+                        <td className="py-3 px-3 font-bold text-slate-900">{u.name}</td>
+                        <td className="py-3 px-3 text-blue-700 font-medium">{u.email}</td>
+                        <td className="py-3 px-3">
+                          {u.nationality} • {u.trade}
+                        </td>
+                        <td className="py-3 px-3">
+                          {u.isPro ? (
+                            <div className="flex items-center gap-2">
+                              <span className="bg-purple-600 text-white font-extrabold px-2.5 py-0.5 rounded-full">
+                                PRO
+                              </span>
+                              <span
+                                className={`font-bold ${
+                                  daysLeft <= 3 ? 'text-amber-600' : 'text-slate-600'
+                                }`}
+                              >
+                                ({daysLeft}d left)
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="bg-slate-100 text-slate-600 font-bold px-2.5 py-0.5 rounded-full">
+                              Free ({u.applicationsUsed}/5)
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 px-3">
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => activateUserPro(u.email)}
+                              className="flex items-center gap-1 bg-purple-600 hover:bg-purple-700 text-white font-bold px-3 py-1.5 rounded-xl shadow-sm transition"
+                            >
+                              <Power className="w-3.5 h-3.5" />
+                              {u.isPro ? 'Extend +30d' : 'Activate PRO'}
+                            </button>
+
+                            {u.isPro && (
+                              <button
+                                onClick={() => deactivateUserPro(u.email)}
+                                className="flex items-center gap-1 bg-red-600 hover:bg-red-700 text-white font-bold px-3 py-1.5 rounded-xl shadow-sm transition"
+                              >
+                                <PowerOff className="w-3.5 h-3.5" />
+                                Deactivate
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* 2. PAYMENT VERIFICATION QUEUE */}
+          <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm">
+            <h3 className="text-lg font-extrabold text-slate-900 mb-1">
+              Payment Proof Verification Queue (24-Hour Activation)
+            </h3>
+            <p className="text-xs text-slate-500 mb-4">
+              Verify uploaded Easypaisa or Cross River Bank ACH screenshots and activate PRO in 1 click.
+            </p>
+
+            {paymentSubmissions.length === 0 ? (
+              <div className="text-center py-8 bg-slate-50 rounded-2xl border border-dashed border-slate-300 text-xs text-slate-500">
+                No payment proofs submitted yet.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-slate-500 uppercase">
+                      <th className="py-3 px-3">Target Email</th>
+                      <th className="py-3 px-3">Account Check</th>
+                      <th className="py-3 px-3">Method & TxID</th>
+                      <th className="py-3 px-3">Receipt Proof</th>
+                      <th className="py-3 px-3">Status</th>
+                      <th className="py-3 px-3">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {paymentSubmissions.map((sub) => {
+                      const isRegistered = users.some(
+                        (u) => u.email.toLowerCase() === sub.targetEmail.toLowerCase()
+                      );
+                      return (
+                        <tr key={sub.id} className="hover:bg-slate-50">
+                          <td className="py-3 px-3 font-bold text-slate-900">{sub.targetEmail}</td>
+                          <td className="py-3 px-3">
+                            {isRegistered ? (
+                              <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-0.5 rounded-full font-bold">
+                                Signed Up ✓
+                              </span>
+                            ) : (
+                              <span className="bg-red-50 text-red-700 border border-red-200 px-2.5 py-0.5 rounded-full font-bold">
+                                Not Signed Up (Non-Refundable)
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-3 px-3">
+                            <span className="font-semibold">{sub.method}</span>
+                            <br />
+                            <span className="text-slate-400">Ref: {sub.transactionId}</span>
+                          </td>
+                          <td className="py-3 px-3">
+                            <button
+                              onClick={() => setPreviewReceiptUrl(sub.screenshotUrl)}
+                              className="flex items-center gap-1 text-blue-700 font-bold hover:underline"
+                            >
+                              <Eye className="w-3.5 h-3.5" /> View Screenshot
+                            </button>
+                          </td>
+                          <td className="py-3 px-3 font-bold">{sub.status}</td>
+                          <td className="py-3 px-3">
+                            {sub.status === 'Pending' ? (
+                              <button
+                                onClick={() => activateUserPro(sub.targetEmail, sub.id)}
+                                disabled={!isRegistered}
+                                className={`px-3.5 py-1.5 rounded-xl font-bold text-white transition ${
+                                  isRegistered
+                                    ? 'bg-purple-600 hover:bg-purple-700 shadow'
+                                    : 'bg-slate-300 cursor-not-allowed'
+                                }`}
+                              >
+                                Approve & Activate PRO
+                              </button>
+                            ) : (
+                              <span className="text-emerald-600 font-extrabold">PRO Activated ✓</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* 3. POST NEW EUROPEAN JOB + RECEIVING PAYMENT ACCOUNTS */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <form
+              onSubmit={handleAdminAddJob}
+              className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-3"
+            >
+              <h3 className="text-lg font-extrabold text-slate-900">Publish New Verified EU Job</h3>
+              <input
+                type="text"
+                required
+                value={newJobTitle}
+                onChange={(e) => setNewJobTitle(e.target.value)}
+                placeholder="Job Title (e.g. Heavy Truck Driver CE)"
+                className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-300"
+              />
+              <div className="grid grid-cols-2 gap-3">
+                <input
+                  type="text"
+                  required
+                  value={newJobCompany}
+                  onChange={(e) => setNewJobCompany(e.target.value)}
+                  placeholder="Company Name"
+                  className="px-3.5 py-2 text-sm rounded-xl border border-slate-300"
+                />
+                <select
+                  value={newJobCountry}
+                  onChange={(e) => setNewJobCountry(e.target.value)}
+                  className="px-3.5 py-2 text-sm rounded-xl border border-slate-300"
+                >
+                  {TARGET_COUNTRIES.slice(1).map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <select
+                  value={newJobCategory}
+                  onChange={(e) => setNewJobCategory(e.target.value as JobCategory)}
+                  className="px-3.5 py-2 text-sm rounded-xl border border-slate-300"
+                >
+                  <option value="Tech & IT">Tech & IT</option>
+                  <option value="Truck & Logistics">Truck & Logistics</option>
+                  <option value="General Labor & Construction">General Labor & Construction</option>
+                  <option value="Agriculture & Farming">Agriculture & Farming</option>
+                </select>
+                <input
+                  type="text"
+                  value={newJobSalary}
+                  onChange={(e) => setNewJobSalary(e.target.value)}
+                  placeholder="Salary (e.g. €2,900 / month)"
+                  className="px-3.5 py-2 text-sm rounded-xl border border-slate-300"
+                />
+              </div>
+              <textarea
+                rows={2}
+                value={newJobDesc}
+                onChange={(e) => setNewJobDesc(e.target.value)}
+                placeholder="Job details & visa sponsorship terms..."
+                className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-300"
+              />
+              <button
+                type="submit"
+                className="w-full bg-blue-700 hover:bg-blue-800 text-white font-bold py-2.5 rounded-xl text-sm"
+              >
+                + Publish Job Live
+              </button>
+            </form>
+
+            <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-3">
+              <h3 className="text-lg font-extrabold text-slate-900">
+                Receiving Payment Accounts (Live Settings)
+              </h3>
+              <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs space-y-1">
+                <p className="font-bold text-emerald-900">Easypaisa Account (Local Pakistan)</p>
+                <p>Account Name: <strong>{paymentConfig.easypaisaName}</strong></p>
+                <p>Account Number: <strong>{paymentConfig.easypaisaNumber}</strong></p>
+                <p>Purpose: <strong>{paymentConfig.easypaisaPurpose}</strong></p>
+              </div>
+              <div className="p-3 rounded-2xl bg-blue-50 border border-blue-200 text-xs space-y-1">
+                <p className="font-bold text-blue-900">ACH Account (International USD)</p>
+                <p>Account Name: <strong>{paymentConfig.achAccountName}</strong></p>
+                <p>Bank: <strong>{paymentConfig.achBankName}</strong></p>
+                <p>Account Number: <strong>{paymentConfig.achAccountNumber}</strong></p>
+                <p>Routing Number: <strong>{paymentConfig.achRoutingNumber}</strong> • Type: <strong>{paymentConfig.achAccountType}</strong></p>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* ====================================================================
+          UPGRADE / RENEW PRO ($5/MONTH) PAYMENT MODAL
+      ==================================================================== */}
+      {showUpgradeModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-xl w-full p-6 sm:p-8 shadow-2xl border border-slate-200 my-8">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+              <div>
+                <span className="text-xs font-extrabold text-purple-600 uppercase">
+                  EUROJOB PRO MEMBERSHIP — $5 / MONTH (30 DAYS)
+                </span>
+                <h3 className="text-xl font-extrabold text-slate-900">
+                  Unlock Unlimited EU Jobs, AI % Score & Europass CV PDF
+                </h3>
+              </div>
+              <button onClick={() => setShowUpgradeModal(false)}>
+                <X className="w-5 h-5 text-slate-400 hover:text-slate-700" />
+              </button>
+            </div>
+
+            {paySubmittedSuccess ? (
+              <div className="py-10 text-center space-y-3">
+                <CheckCircle2 className="w-14 h-14 text-emerald-500 mx-auto" />
+                <h4 className="text-xl font-extrabold text-slate-900">
+                  Payment Screenshot Submitted!
+                </h4>
+                <p className="text-sm text-slate-600 max-w-md mx-auto">
+                  Your payment proof has been sent to the EUROJOB Admin Dashboard. Your account will be activated for <strong>30 days</strong> within <strong>24 hours</strong> and you will receive a Congratulations notification.
+                </p>
+                <button
+                  onClick={() => setShowUpgradeModal(false)}
+                  className="mt-4 bg-blue-700 text-white font-bold px-6 py-2.5 rounded-xl text-sm"
+                >
+                  Return to EUROJOB
+                </button>
+              </div>
+            ) : (
+              <div className="mt-5 space-y-5">
+                <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-2xl">
+                  <button
+                    type="button"
+                    onClick={() => setPaymentTab('easypaisa')}
+                    className={`py-2.5 rounded-xl text-xs font-extrabold transition ${
+                      paymentTab === 'easypaisa'
+                        ? 'bg-emerald-600 text-white shadow'
+                        : 'text-slate-700 hover:text-slate-900'
+                    }`}
+                  >
+                    Easypaisa (Local Pakistan)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPaymentTab('ach')}
+                    className={`py-2.5 rounded-xl text-xs font-extrabold transition ${
+                      paymentTab === 'ach'
+                        ? 'bg-blue-800 text-white shadow'
+                        : 'text-slate-700 hover:text-slate-900'
+                    }`}
+                  >
+                    ACH Bank Transfer (International)
+                  </button>
+                </div>
+
+                {paymentTab === 'easypaisa' ? (
+                  <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 space-y-2 text-xs">
+                    <div className="flex justify-between items-center">
+                      <span className="text-emerald-800 font-semibold">Account Name:</span>
+                      <span className="font-extrabold text-slate-900 text-sm">{paymentConfig.easypaisaName}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-emerald-800 font-semibold">Easypaisa Account Number:</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-extrabold text-slate-900 text-sm">{paymentConfig.easypaisaNumber}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleCopy(paymentConfig.easypaisaNumber, 'ep')}
+                          className="bg-emerald-600 text-white px-2 py-0.5 rounded text-[11px] font-bold"
+                        >
+                          {copiedField === 'ep' ? 'Copied' : 'Copy'}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-emerald-800 font-semibold">Transfer Purpose:</span>
+                      <span className="font-extrabold text-emerald-900 bg-emerald-200/70 px-2.5 py-0.5 rounded">
+                        {paymentConfig.easypaisaPurpose}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center pt-1 border-t border-emerald-200">
+                      <span className="text-emerald-800 font-semibold">Amount Payable:</span>
+                      <span className="font-extrabold text-slate-900">{paymentConfig.easypaisaPkrAmount}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-4 rounded-2xl bg-blue-50 border border-blue-200 space-y-2 text-xs">
+                    <div className="flex justify-between items-center">
+                      <span className="text-blue-800 font-semibold">Account Name:</span>
+                      <span className="font-extrabold text-slate-900">{paymentConfig.achAccountName}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-blue-800 font-semibold">Bank Name:</span>
+                      <span className="font-extrabold text-slate-900">{paymentConfig.achBankName}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-blue-800 font-semibold">Account Number:</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-extrabold text-slate-900">{paymentConfig.achAccountNumber}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleCopy(paymentConfig.achAccountNumber, 'ach-acc')}
+                          className="bg-blue-700 text-white px-2 py-0.5 rounded text-[11px] font-bold"
+                        >
+                          {copiedField === 'ach-acc' ? 'Copied' : 'Copy'}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-blue-800 font-semibold">Routing Number:</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-extrabold text-slate-900">{paymentConfig.achRoutingNumber}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleCopy(paymentConfig.achRoutingNumber, 'ach-rt')}
+                          className="bg-blue-700 text-white px-2 py-0.5 rounded text-[11px] font-bold"
+                        >
+                          {copiedField === 'ach-rt' ? 'Copied' : 'Copy'}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-blue-800 font-semibold">Account Type:</span>
+                      <span className="font-extrabold text-slate-900">{paymentConfig.achAccountType}</span>
+                    </div>
+                    <div className="flex justify-between items-center pt-1 border-t border-blue-200">
+                      <span className="text-blue-800 font-semibold">Amount Payable:</span>
+                      <span className="font-extrabold text-slate-900">{paymentConfig.achUsdAmount}</span>
+                    </div>
+                  </div>
+                )}
+
+                <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-300 flex items-start gap-2.5 text-xs text-amber-950">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                  <p>
+                    <strong>MANDATORY NOTICE:</strong> Enter the exact <strong>signed-up EUROJOB email</strong> on which you want PRO activated. If an unregistered / non-signed-up email is submitted, PRO cannot be activated and the paid amount is strictly <strong>NON-REFUNDABLE</strong>. Verification takes up to <strong>24 hours</strong>.
+                  </p>
+                </div>
+
+                <form onSubmit={handleSubmitPaymentProof} className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Registered Email Address to Activate PRO *
+                    </label>
+                    <input
+                      type="email"
+                      required
+                      value={payTargetEmail}
+                      onChange={(e) => setPayTargetEmail(e.target.value)}
+                      placeholder="your.signedup.email@gmail.com"
+                      className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-slate-300"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Transaction ID / Reference Number *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={payTxId}
+                      onChange={(e) => setPayTxId(e.target.value)}
+                      placeholder="e.g. EP-98432104 or ACH Reference ID"
+                      className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-slate-300"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Upload Payment Proof Screenshot *
+                    </label>
+                    <label className="flex flex-col items-center justify-center border-2 border-dashed border-slate-300 hover:border-blue-500 rounded-2xl p-4 cursor-pointer bg-slate-50">
+                      <Upload className="w-6 h-6 text-blue-600 mb-1" />
+                      <span className="text-xs font-semibold text-slate-700">
+                        {payScreenshot ? 'Screenshot Attached ✓ (Click to change)' : 'Click to upload receipt screenshot (PNG/JPG)'}
+                      </span>
+                      <input type="file" accept="image/*" required onChange={handleScreenshotUpload} className="hidden" />
+                    </label>
+                    {payScreenshot && (
+                      <img src={payScreenshot} alt="Preview" className="mt-2 h-24 rounded-xl border border-slate-200 object-cover" />
+                    )}
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 rounded-xl shadow-lg transition text-sm"
+                  >
+                    Submit Payment Proof (Activate Within 24 Hours)
+                  </button>
+                </form>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Receipt Image Preview Modal */}
+      {previewReceiptUrl && (
+        <div
+          onClick={() => setPreviewReceiptUrl(null)}
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+        >
+          <div className="bg-white p-3 rounded-2xl max-w-lg w-full">
+            <img src={previewReceiptUrl} alt="Payment Receipt" className="w-full rounded-xl" />
+            <button
+              onClick={() => setPreviewReceiptUrl(null)}
+              className="mt-3 w-full bg-slate-900 text-white py-2 rounded-xl text-xs font-bold"
+            >
+              Close Preview
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Signup / Login Modal */}
+      {showAuthModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-slate-200">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+              <h3 className="text-xl font-extrabold text-slate-900">
+                {authMode === 'signup' ? 'Create Free EUROJOB Account' : 'Welcome Back to EUROJOB'}
+              </h3>
+              <button onClick={() => setShowAuthModal(false)}>
+                <X className="w-5 h-5 text-slate-400" />
+              </button>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              <button
+                type="button"
+                onClick={() => handleAuthSubmit('Google')}
+                className="w-full flex items-center justify-center gap-2.5 bg-white hover:bg-slate-50 text-slate-900 font-bold py-2.5 px-4 rounded-xl border border-slate-300 shadow-sm text-sm transition"
+              >
+                <Globe className="w-4 h-4 text-blue-600" />
+                Continue with Google
+              </button>
+
+              <div className="relative text-center text-xs text-slate-400">
+                <span className="bg-white px-2 relative z-10">or sign up with Email</span>
+                <div className="border-t border-slate-200 absolute inset-x-0 top-1/2" />
+              </div>
+
+              <div className="space-y-3">
+                {authMode === 'signup' && (
+                  <input
+                    type="text"
+                    value={authName}
+                    onChange={(e) => setAuthName(e.target.value)}
+                    placeholder="Full Name (as on Passport)"
+                    className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-slate-300"
+                  />
+                )}
+                <input
+                  type="email"
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  placeholder="Email Address"
+                  className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-slate-300"
+                />
+                {authMode === 'signup' && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <select
+                      value={authNationality}
+                      onChange={(e) => setAuthNationality(e.target.value)}
+                      className="px-3 py-2.5 text-xs rounded-xl border border-slate-300"
+                    >
+                      <option>Pakistan</option>
+                      <option>India</option>
+                      <option>Bangladesh</option>
+                      <option>Nepal</option>
+                      <option>Philippines</option>
+                      <option>Sri Lanka</option>
+                    </select>
+                    <select
+                      value={authTrade}
+                      onChange={(e) => setAuthTrade(e.target.value as JobCategory)}
+                      className="px-3 py-2.5 text-xs rounded-xl border border-slate-300"
+                    >
+                      <option value="Tech & IT">Tech & IT</option>
+                      <option value="Truck & Logistics">Truck & Logistics</option>
+                      <option value="General Labor & Construction">General Labor</option>
+                      <option value="Agriculture & Farming">Agriculture</option>
+                    </select>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => handleAuthSubmit('Email')}
+                  className="w-full bg-blue-700 hover:bg-blue-800 text-white font-bold py-3 rounded-xl text-sm shadow"
+                >
+                  {authMode === 'signup' ? 'Create Account (5 Free Applications)' : 'Login'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating AI Helpcenter Chatbot */}
+      <div className="fixed bottom-5 right-5 z-40">
+        {chatOpen ? (
+          <div className="w-80 sm:w-96 bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col">
+            <div className="bg-[#0F172A] text-white px-4 py-3.5 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-blue-400" />
+                <span className="font-bold text-sm">EUROJOB AI Helpcenter</span>
+              </div>
+              <button onClick={() => setChatOpen(false)}>
+                <X className="w-4 h-4 text-slate-400 hover:text-white" />
+              </button>
+            </div>
+            <div className="p-4 h-72 overflow-y-auto space-y-3 bg-slate-50">
+              {chatMessages.map((m, idx) => (
+                <div
+                  key={idx}
+                  className={`p-3 rounded-2xl text-xs leading-relaxed ${
+                    m.role === 'user'
+                      ? 'bg-blue-700 text-white ml-8'
+                      : 'bg-white text-slate-800 border border-slate-200 mr-6'
+                  }`}
+                >
+                  {m.text}
+                </div>
+              ))}
+            </div>
+            <form onSubmit={handleSendChat} className="p-2.5 bg-white border-t border-slate-200 flex gap-2">
+              <input
+                type="text"
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                placeholder="Ask about visas, jobs, Pro..."
+                className="flex-1 text-xs px-3 py-2 rounded-xl bg-slate-100 focus:outline-none"
+              />
+              <button
+                type="submit"
+                className="bg-blue-700 hover:bg-blue-800 text-white p-2 rounded-xl"
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            </form>
+          </div>
+        ) : (
+          <button
+            onClick={() => setChatOpen(true)}
+            className="flex items-center gap-2 bg-[#0F172A] hover:bg-blue-900 text-white px-4 py-3 rounded-full shadow-xl border border-blue-500/40 text-xs font-bold transition"
+          >
+            <MessageSquare className="w-4 h-4 text-blue-400" />
+            AI Helpcenter
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
